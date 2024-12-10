@@ -6,23 +6,15 @@
 #include <cstdio>
 #include <iostream>
 #include <ranges>
+#include <regex>
+#include <stdexcept>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 
 using namespace std;
 
-#define DOUBLE double
-#define FLOAT float
-#define FIXED(x, y) Fixed<x, y>
-#define FAST_FIXED(x, y) FastFixed<x, y>
-
-#ifndef TYPES
-#define TYPES
-#endif
-
-#define STRINGIFY_IMPL(x) #x
-#define STRINGIFY(x) STRINGIFY_IMPL(x)
-#define TYPES_STRING STRINGIFY((TYPES))
+// helpers
 
 template <typename... Types> struct CountStruct;
 
@@ -37,17 +29,129 @@ template <> struct CountStruct<>
     static const size_t val = 0;
 };
 
-template <int N, int M> struct Fixed
+// sizes business
+
+#ifndef DSIZES
+#define DSIZES S(36, 84)
+#endif
+
+template <int N, int M> struct CompileSize
 {
+    static const int n = N;
+    static const int m = M;
+};
+
+#define S(x, y) CompileSize<x, y>
+#define SIZES_STRING STRINGIFY((SIZES))
+
+#define SIZES_COUNT CountStruct<SIZES>::val
+
+// types business
+
+#define DOUBLE double
+#define FLOAT float
+#define FIXED(x, y) Fixed<x, y>
+#define FAST_FIXED(x, y) FastFixed<x, y>
+
+#ifndef TYPES
+#define TYPES
+#endif
+
+#define STRINGIFY_IMPL(x) #x
+#define STRINGIFY(x) STRINGIFY_IMPL(x)
+#define TYPES_STRING STRINGIFY((TYPES))
+
+#define TYPES_COUNT CountStruct<TYPES>::val
+
+template <size_t N>
+struct SuitableType
+    : type_identity<
+          conditional<N == 8, int8_t,
+                      conditional<N == 16, int16_t,
+                                  conditional<N == 32, int32_t,
+                                              enable_if<N == 64, int64_t>>>>>
+{
+};
+
+template <size_t N>
+struct SuitableFastType
+    : type_identity<conditional<
+          N <= 8, int_fast8_t,
+          conditional<N <= 16, int_fast16_t,
+                      conditional<N <= 32, int_fast32_t,
+                                  enable_if<N <= 64, int_fast64_t>>>>>
+{
+};
+
+template <size_t N, size_t M> struct Fixed
+{
+
+    constexpr Fixed(int v)
+        : v(v << M)
+    {
+    }
+    constexpr Fixed(float f)
+        : v(f * (1 << M))
+    {
+    }
+    constexpr Fixed(double f)
+        : v(f * (1 << M))
+    {
+    }
+    constexpr Fixed()
+        : v(0)
+    {
+    }
+
+    static constexpr Fixed from_raw(SuitableType<N> x)
+    {
+        Fixed ret;
+        ret.v = x;
+        return ret;
+    }
+
+    SuitableType<N> v;
+
+    auto operator<=>(const Fixed&) const = default;
+    bool operator==(const Fixed&) const = default;
 };
 
 template <int N, int M> struct FastFixed
 {
+
+    constexpr FastFixed(int v)
+        : v(v << M)
+    {
+    }
+    constexpr FastFixed(float f)
+        : v(f * (1 << M))
+    {
+    }
+    constexpr FastFixed(double f)
+        : v(f * (1 << M))
+    {
+    }
+    constexpr FastFixed()
+        : v(0)
+    {
+    }
+
+    static constexpr FastFixed from_raw(SuitableFastType<N> x)
+    {
+        FastFixed ret;
+        ret.v = x;
+        return ret;
+    }
+
+    SuitableFastType<N> v;
+
+    auto operator<=>(const FastFixed&) const = default;
+    bool operator==(const FastFixed&) const = default;
 };
 
-constexpr array<string, CountStruct<TYPES>::val> parseTypesStr()
+constexpr array<string, TYPES_COUNT> parseTypesStr()
 {
-    array<string, CountStruct<TYPES>::val> result;
+    array<string, TYPES_COUNT> result;
     string typesString(TYPES_STRING);
     size_t current_word_idx = 0;
     string curent_word = {};
@@ -74,17 +178,63 @@ constexpr array<string, CountStruct<TYPES>::val> parseTypesStr()
             curent_word += typesString[i];
         }
     }
-    result[CountStruct<TYPES>::val - 1] = curent_word;
+    result[TYPES_COUNT - 1] = curent_word;
     return result;
 };
 
 auto typesStrArr = parseTypesStr();
 
+template <typename F, typename... Ts, size_t... Is>
+constexpr auto chooseTemplate(std::string_view name, F f,
+                              std::index_sequence<Is...> ind) -> void
+{
+    (void)ind;
+    (
+        [&]<size_t i>
+        {
+            if (typesStrArr[i] == name)
+            {
+                f.template operator()<std::remove_cvref_t<decltype(std::get<i>(
+                    std::tuple<Ts...>()))>>();
+            }
+        }.template operator()<Is>(),
+        ...);
+}
 
+void strToType(std::string_view arg, auto f)
+{
+    chooseTemplate<decltype(f), TYPES>(arg, f,
+                                       std::index_sequence_for<TYPES>{});
+}
 
+string strToTypeStr(string& name)
+{
+    if (name == "FLOAT" || name == "DOUBLE")
+    {
+        // convert for lower case
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        return name;
+    }
+    // fixed and fast_fixed
+    const regex fixedRegex("Fixed\\((\\d+),\\s*(\\d+)\\)",
+                           std::regex_constants::icase);
+    const regex fastFixedRegex("Fast_Fixed\\((\\d+),\\s*(\\d+)\\)",
+                               std::regex_constants::icase);
+    std::smatch matches;
+    if (regex_search(name, matches, fastFixedRegex))
+    {
+        return "FastFixed<" + matches[1].str() + "," + matches[2].str() + ">";
+    }
+    else if (regex_search(name, matches, fixedRegex))
+    {
+        return "Fixed<" + matches[1].str() + "," + matches[2].str() + ">";
+    }
+    throw runtime_error("Unknown input type: " + name);
+}
 
-// constexpr size_t N = 36, M = 84;
-// // constexpr size_t N = 14, M = 5;
+constexpr size_t N = 36, M = 84;
+// constexpr size_t N = 14, M = 5;
 // constexpr size_t T = 1'000'000;
 // constexpr std::array<pair<int, int>, 4> deltas{
 //     { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }
@@ -107,358 +257,359 @@ auto typesStrArr = parseTypesStr();
 //     "#####",
 // };
 
-// char field[N][M + 1] = {
-//     "##########################################################################"
-//     "##########",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "#                                       ......... " "         #",
-//     "#..............#            #           ......... " "         #",
-//     "#..............#            #           ......... " "         #",
-//     "#..............#            #           ......... " "         #",
-//     "#..............#            # " "         #",
-//     "#..............#            # " "         #",
-//     "#..............#            # " "         #",
-//     "#..............#            # " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............# " "         #",
-//     "#..............#............################                     # " "
-//     #",
-//     "#...........................#....................................# " "
-//     #",
-//     "#...........................#....................................# " "
-//     #",
-//     "#...........................#....................................# " "
-//     #",
-//     "################################################################## " "
-//     #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "# " "         #",
-//     "##########################################################################"
-//     "##########",
-// };
+char field[N][M + 1] = {
+    "##########################################################################"
+    "##########",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "#                                       ......... "
+    "         #",
+    "#..............#            #           ......... "
+    "         #",
+    "#..............#            #           ......... "
+    "         #",
+    "#..............#            #           ......... "
+    "         #",
+    "#..............#            # "
+    "         #",
+    "#..............#            # "
+    "         #",
+    "#..............#            # "
+    "         #",
+    "#..............#            # "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............# "
+    "         #",
+    "#..............#............################                     # "
+    "#",
+    "#...........................#....................................# "
+    "#",
+    "#...........................#....................................# "
+    "#",
+    "#...........................#....................................# "
+    "#",
+    "################################################################## "
+    "#",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "# "
+    "         #",
+    "##########################################################################"
+    "##########",
+};
 
-// struct Fixed
-// {
-//     constexpr Fixed(int v)
-//         : v(v << 16)
-//     {
-//     }
-//     constexpr Fixed(float f)
-//         : v(f * (1 << 16))
-//     {
-//     }
-//     constexpr Fixed(double f)
-//         : v(f * (1 << 16))
-//     {
-//     }
-//     constexpr Fixed()
-//         : v(0)
-//     {
-//     }
+template <typename pType, typename vType, typename vFlowType, int N, int M>
+class FluidSim
+{
+    // static constexpr Fixed inf =
+    //     Fixed::from_raw(std::numeric_limits<int32_t>::max());
+    // static constexpr Fixed eps = Fixed::from_raw(deltas.size());
 
-//     static constexpr Fixed from_raw(int32_t x)
-//     {
-//         Fixed ret;
-//         ret.v = x;
-//         return ret;
-//     }
+    // Fixed operator+(Fixed a, Fixed b)
+    // {
+    //     return Fixed::from_raw(a.v + b.v);
+    // }
 
-//     int32_t v;
+    // Fixed operator-(Fixed a, Fixed b)
+    // {
+    //     return Fixed::from_raw(a.v - b.v);
+    // }
 
-//     auto operator<=>(const Fixed&) const = default;
-//     bool operator==(const Fixed&) const = default;
-// };
+    // Fixed operator*(Fixed a, Fixed b)
+    // {
+    //     return Fixed::from_raw(((int64_t)a.v * b.v) >> 16);
+    // }
 
-// static constexpr Fixed inf =
-//     Fixed::from_raw(std::numeric_limits<int32_t>::max());
-// static constexpr Fixed eps = Fixed::from_raw(deltas.size());
+    // Fixed operator/(Fixed a, Fixed b)
+    // {
+    //     return Fixed::from_raw(((int64_t)a.v << 16) / b.v);
+    // }
 
-// Fixed operator+(Fixed a, Fixed b)
-// {
-//     return Fixed::from_raw(a.v + b.v);
-// }
+    // Fixed& operator+=(Fixed& a, Fixed b)
+    // {
+    //     return a = a + b;
+    // }
 
-// Fixed operator-(Fixed a, Fixed b)
-// {
-//     return Fixed::from_raw(a.v - b.v);
-// }
+    // Fixed& operator-=(Fixed& a, Fixed b)
+    // {
+    //     return a = a - b;
+    // }
 
-// Fixed operator*(Fixed a, Fixed b)
-// {
-//     return Fixed::from_raw(((int64_t)a.v * b.v) >> 16);
-// }
+    // Fixed& operator*=(Fixed& a, Fixed b)
+    // {
+    //     return a = a * b;
+    // }
 
-// Fixed operator/(Fixed a, Fixed b)
-// {
-//     return Fixed::from_raw(((int64_t)a.v << 16) / b.v);
-// }
+    // Fixed& operator/=(Fixed& a, Fixed b)
+    // {
+    //     return a = a / b;
+    // }
 
-// Fixed& operator+=(Fixed& a, Fixed b)
-// {
-//     return a = a + b;
-// }
+    // Fixed operator-(Fixed x)
+    // {
+    //     return Fixed::from_raw(-x.v);
+    // }
 
-// Fixed& operator-=(Fixed& a, Fixed b)
-// {
-//     return a = a - b;
-// }
+    // Fixed abs(Fixed x)
+    // {
+    //     if (x.v < 0)
+    //     {
+    //         x.v = -x.v;
+    //     }
+    //     return x;
+    // }
 
-// Fixed& operator*=(Fixed& a, Fixed b)
-// {
-//     return a = a * b;
-// }
+    // ostream& operator<<(ostream& out, Fixed x)
+    // {
+    //     return out << x.v / (double)(1 << 16);
+    // }
 
-// Fixed& operator/=(Fixed& a, Fixed b)
-// {
-//     return a = a / b;
-// }
+    // Fixed rho[256];
 
-// Fixed operator-(Fixed x)
-// {
-//     return Fixed::from_raw(-x.v);
-// }
+    // Fixed p[N][M]{}, old_p[N][M];
 
-// Fixed abs(Fixed x)
-// {
-//     if (x.v < 0)
-//     {
-//         x.v = -x.v;
-//     }
-//     return x;
-// }
+    // struct VectorField
+    // {
+    //     array<Fixed, deltas.size()> v[N][M];
+    //     Fixed& add(int x, int y, int dx, int dy, Fixed dv)
+    //     {
+    //         return get(x, y, dx, dy) += dv;
+    //     }
 
-// ostream& operator<<(ostream& out, Fixed x)
-// {
-//     return out << x.v / (double)(1 << 16);
-// }
+    //     Fixed& get(int x, int y, int dx, int dy)
+    //     {
+    //         size_t i = ranges::find(deltas, pair(dx, dy)) - deltas.begin();
+    //         assert(i < deltas.size());
+    //         return v[x][y][i];
+    //     }
+    // };
 
-// Fixed rho[256];
+    // VectorField velocity{}, velocity_flow{};
+    // int last_use[N][M]{};
+    // int UT = 0;
 
-// Fixed p[N][M]{}, old_p[N][M];
+    // mt19937 rnd(1337);
 
-// struct VectorField
-// {
-//     array<Fixed, deltas.size()> v[N][M];
-//     Fixed& add(int x, int y, int dx, int dy, Fixed dv)
-//     {
-//         return get(x, y, dx, dy) += dv;
-//     }
+    // tuple<Fixed, bool, pair<int, int>> propagate_flow(int x, int y, Fixed lim)
+    // {
+    //     last_use[x][y] = UT - 1;
+    //     Fixed ret = 0;
+    //     for (auto [dx, dy] : deltas)
+    //     {
+    //         int nx = x + dx, ny = y + dy;
+    //         if (field[nx][ny] != '#' && last_use[nx][ny] < UT)
+    //         {
+    //             auto cap = velocity.get(x, y, dx, dy);
+    //             auto flow = velocity_flow.get(x, y, dx, dy);
+    //             if (flow == cap)
+    //             {
+    //                 continue;
+    //             }
+    //             // assert(v >= velocity_flow.get(x, y, dx, dy));
+    //             auto vp = min(lim, cap - flow);
+    //             if (last_use[nx][ny] == UT - 1)
+    //             {
+    //                 velocity_flow.add(x, y, dx, dy, vp);
+    //                 last_use[x][y] = UT;
+    //                 // cerr << x << " " << y << " -> " << nx << " " << ny << " "
+    //                 <<
+    //                     // vp << " / " << lim << "\n";
+    //                     return { vp, 1, { nx, ny } };
+    //             }
+    //             auto [t, prop, end] = propagate_flow(nx, ny, vp);
+    //             ret += t;
+    //             if (prop)
+    //             {
+    //                 velocity_flow.add(x, y, dx, dy, t);
+    //                 last_use[x][y] = UT;
+    //                 // cerr << x << " " << y << " -> " << nx << " " << ny << " "
+    //                 <<
+    //                     // t << " / " << lim << "\n";
+    //                     return { t, prop && end != pair(x, y), end };
+    //             }
+    //         }
+    //     }
+    //     last_use[x][y] = UT;
+    //     return { ret, 0, { 0, 0 } };
+    // }
 
-//     Fixed& get(int x, int y, int dx, int dy)
-//     {
-//         size_t i = ranges::find(deltas, pair(dx, dy)) - deltas.begin();
-//         assert(i < deltas.size());
-//         return v[x][y][i];
-//     }
-// };
+    // Fixed random01()
+    // {
+    //     return Fixed::from_raw((rnd() & ((1 << 16) - 1)));
+    // }
 
-// VectorField velocity{}, velocity_flow{};
-// int last_use[N][M]{};
-// int UT = 0;
+    // void propagate_stop(int x, int y, bool force = false)
+    // {
+    //     if (!force)
+    //     {
+    //         bool stop = true;
+    //         for (auto [dx, dy] : deltas)
+    //         {
+    //             int nx = x + dx, ny = y + dy;
+    //             if (field[nx][ny] != '#' && last_use[nx][ny] < UT - 1 &&
+    //                 velocity.get(x, y, dx, dy) > 0)
+    //             {
+    //                 stop = false;
+    //                 break;
+    //             }
+    //         }
+    //         if (!stop)
+    //         {
+    //             return;
+    //         }
+    //     }
+    //     last_use[x][y] = UT;
+    //     for (auto [dx, dy] : deltas)
+    //     {
+    //         int nx = x + dx, ny = y + dy;
+    //         if (field[nx][ny] == '#' || last_use[nx][ny] == UT ||
+    //             velocity.get(x, y, dx, dy) > 0)
+    //         {
+    //             continue;
+    //         }
+    //         propagate_stop(nx, ny);
+    //     }
+    // }
 
-// mt19937 rnd(1337);
+    // Fixed move_prob(int x, int y)
+    // {
+    //     Fixed sum = 0;
+    //     for (size_t i = 0; i < deltas.size(); ++i)
+    //     {
+    //         auto [dx, dy] = deltas[i];
+    //         int nx = x + dx, ny = y + dy;
+    //         if (field[nx][ny] == '#' || last_use[nx][ny] == UT)
+    //         {
+    //             continue;
+    //         }
+    //         auto v = velocity.get(x, y, dx, dy);
+    //         if (v < 0)
+    //         {
+    //             continue;
+    //         }
+    //         sum += v;
+    //     }
+    //     return sum;
+    // }
 
-// tuple<Fixed, bool, pair<int, int>> propagate_flow(int x, int y, Fixed lim)
-// {
-//     last_use[x][y] = UT - 1;
-//     Fixed ret = 0;
-//     for (auto [dx, dy] : deltas)
-//     {
-//         int nx = x + dx, ny = y + dy;
-//         if (field[nx][ny] != '#' && last_use[nx][ny] < UT)
-//         {
-//             auto cap = velocity.get(x, y, dx, dy);
-//             auto flow = velocity_flow.get(x, y, dx, dy);
-//             if (flow == cap)
-//             {
-//                 continue;
-//             }
-//             // assert(v >= velocity_flow.get(x, y, dx, dy));
-//             auto vp = min(lim, cap - flow);
-//             if (last_use[nx][ny] == UT - 1)
-//             {
-//                 velocity_flow.add(x, y, dx, dy, vp);
-//                 last_use[x][y] = UT;
-//                 // cerr << x << " " << y << " -> " << nx << " " << ny << " "
-//                 <<
-//                 // vp << " / " << lim << "\n";
-//                 return { vp, 1, { nx, ny } };
-//             }
-//             auto [t, prop, end] = propagate_flow(nx, ny, vp);
-//             ret += t;
-//             if (prop)
-//             {
-//                 velocity_flow.add(x, y, dx, dy, t);
-//                 last_use[x][y] = UT;
-//                 // cerr << x << " " << y << " -> " << nx << " " << ny << " "
-//                 <<
-//                 // t << " / " << lim << "\n";
-//                 return { t, prop && end != pair(x, y), end };
-//             }
-//         }
-//     }
-//     last_use[x][y] = UT;
-//     return { ret, 0, { 0, 0 } };
-// }
+    // struct ParticleParams
+    // {
+    //     char type;
+    //     Fixed cur_p;
+    //     array<Fixed, deltas.size()> v;
 
-// Fixed random01()
-// {
-//     return Fixed::from_raw((rnd() & ((1 << 16) - 1)));
-// }
+    //     void swap_with(int x, int y)
+    //     {
+    //         swap(field[x][y], type);
+    //         swap(p[x][y], cur_p);
+    //         swap(velocity.v[x][y], v);
+    //     }
+    // };
 
-// void propagate_stop(int x, int y, bool force = false)
-// {
-//     if (!force)
-//     {
-//         bool stop = true;
-//         for (auto [dx, dy] : deltas)
-//         {
-//             int nx = x + dx, ny = y + dy;
-//             if (field[nx][ny] != '#' && last_use[nx][ny] < UT - 1 &&
-//                 velocity.get(x, y, dx, dy) > 0)
-//             {
-//                 stop = false;
-//                 break;
-//             }
-//         }
-//         if (!stop)
-//         {
-//             return;
-//         }
-//     }
-//     last_use[x][y] = UT;
-//     for (auto [dx, dy] : deltas)
-//     {
-//         int nx = x + dx, ny = y + dy;
-//         if (field[nx][ny] == '#' || last_use[nx][ny] == UT ||
-//             velocity.get(x, y, dx, dy) > 0)
-//         {
-//             continue;
-//         }
-//         propagate_stop(nx, ny);
-//     }
-// }
+    // bool propagate_move(int x, int y, bool is_first)
+    // {
+    //     last_use[x][y] = UT - is_first;
+    //     bool ret = false;
+    //     int nx = -1, ny = -1;
+    //     do
+    //     {
+    //         std::array<Fixed, deltas.size()> tres;
+    //         Fixed sum = 0;
+    //         for (size_t i = 0; i < deltas.size(); ++i)
+    //         {
+    //             auto [dx, dy] = deltas[i];
+    //             int nx = x + dx, ny = y + dy;
+    //             if (field[nx][ny] == '#' || last_use[nx][ny] == UT)
+    //             {
+    //                 tres[i] = sum;
+    //                 continue;
+    //             }
+    //             auto v = velocity.get(x, y, dx, dy);
+    //             if (v < 0)
+    //             {
+    //                 tres[i] = sum;
+    //                 continue;
+    //             }
+    //             sum += v;
+    //             tres[i] = sum;
+    //         }
 
-// Fixed move_prob(int x, int y)
-// {
-//     Fixed sum = 0;
-//     for (size_t i = 0; i < deltas.size(); ++i)
-//     {
-//         auto [dx, dy] = deltas[i];
-//         int nx = x + dx, ny = y + dy;
-//         if (field[nx][ny] == '#' || last_use[nx][ny] == UT)
-//         {
-//             continue;
-//         }
-//         auto v = velocity.get(x, y, dx, dy);
-//         if (v < 0)
-//         {
-//             continue;
-//         }
-//         sum += v;
-//     }
-//     return sum;
-// }
+    //         if (sum == 0)
+    //         {
+    //             break;
+    //         }
 
-// struct ParticleParams
-// {
-//     char type;
-//     Fixed cur_p;
-//     array<Fixed, deltas.size()> v;
+    //         Fixed p = random01() * sum;
+    //         size_t d = std::ranges::upper_bound(tres, p) - tres.begin();
 
-//     void swap_with(int x, int y)
-//     {
-//         swap(field[x][y], type);
-//         swap(p[x][y], cur_p);
-//         swap(velocity.v[x][y], v);
-//     }
-// };
+    //         auto [dx, dy] = deltas[d];
+    //         nx = x + dx;
+    //         ny = y + dy;
+    //         assert(velocity.get(x, y, dx, dy) > 0 && field[nx][ny] != '#' &&
+    //                last_use[nx][ny] < UT);
 
-// bool propagate_move(int x, int y, bool is_first)
-// {
-//     last_use[x][y] = UT - is_first;
-//     bool ret = false;
-//     int nx = -1, ny = -1;
-//     do
-//     {
-//         std::array<Fixed, deltas.size()> tres;
-//         Fixed sum = 0;
-//         for (size_t i = 0; i < deltas.size(); ++i)
-//         {
-//             auto [dx, dy] = deltas[i];
-//             int nx = x + dx, ny = y + dy;
-//             if (field[nx][ny] == '#' || last_use[nx][ny] == UT)
-//             {
-//                 tres[i] = sum;
-//                 continue;
-//             }
-//             auto v = velocity.get(x, y, dx, dy);
-//             if (v < 0)
-//             {
-//                 tres[i] = sum;
-//                 continue;
-//             }
-//             sum += v;
-//             tres[i] = sum;
-//         }
+    //         ret = (last_use[nx][ny] == UT - 1 || propagate_move(nx, ny, false));
+    //     } while (!ret);
+    //     last_use[x][y] = UT;
+    //     for (size_t i = 0; i < deltas.size(); ++i)
+    //     {
+    //         auto [dx, dy] = deltas[i];
+    //         int nx = x + dx, ny = y + dy;
+    //         if (field[nx][ny] != '#' && last_use[nx][ny] < UT - 1 &&
+    //             velocity.get(x, y, dx, dy) < 0)
+    //         {
+    //             propagate_stop(nx, ny);
+    //         }
+    //     }
+    //     if (ret)
+    //     {
+    //         if (!is_first)
+    //         {
+    //             ParticleParams pp{};
+    //             pp.swap_with(x, y);
+    //             pp.swap_with(nx, ny);
+    //             pp.swap_with(x, y);
+    //         }
+    //     }
+    //     return ret;
+    // }
 
-//         if (sum == 0)
-//         {
-//             break;
-//         }
-
-//         Fixed p = random01() * sum;
-//         size_t d = std::ranges::upper_bound(tres, p) - tres.begin();
-
-//         auto [dx, dy] = deltas[d];
-//         nx = x + dx;
-//         ny = y + dy;
-//         assert(velocity.get(x, y, dx, dy) > 0 && field[nx][ny] != '#' &&
-//                last_use[nx][ny] < UT);
-
-//         ret = (last_use[nx][ny] == UT - 1 || propagate_move(nx, ny, false));
-//     } while (!ret);
-//     last_use[x][y] = UT;
-//     for (size_t i = 0; i < deltas.size(); ++i)
-//     {
-//         auto [dx, dy] = deltas[i];
-//         int nx = x + dx, ny = y + dy;
-//         if (field[nx][ny] != '#' && last_use[nx][ny] < UT - 1 &&
-//             velocity.get(x, y, dx, dy) < 0)
-//         {
-//             propagate_stop(nx, ny);
-//         }
-//     }
-//     if (ret)
-//     {
-//         if (!is_first)
-//         {
-//             ParticleParams pp{};
-//             pp.swap_with(x, y);
-//             pp.swap_with(nx, ny);
-//             pp.swap_with(x, y);
-//         }
-//     }
-//     return ret;
-// }
-
-// int dirs[N][M]{};
+    // int dirs[N][M]{};
+};
 
 // int main() {
 //     rho[' '] = 0.01;
@@ -584,22 +735,21 @@ auto typesStrArr = parseTypesStr();
 //     }
 // }
 
-
-void printDelim(){
+void printDelim()
+{
     cout << "#############################################" << endl;
 }
-
 
 int main(int argc, char** argv)
 {
 
-    // Outpud debug info
+    // Outpud types debug info
 
     printDelim();
 
     cout << "Types string: " << TYPES_STRING << endl;
 
-    cout << "Types amount: " << CountStruct<TYPES>::val << endl;
+    cout << "Types amount: " << TYPES_COUNT << endl;
 
     cout << "Type list: ";
 
@@ -610,43 +760,61 @@ int main(int argc, char** argv)
 
     cout << endl;
 
+    // Outpud sizes debug info
+
+    printDelim();
+
+    cout << "Sizes string: " << SIZES_STRING << endl;
+
+    cout << "Sizes amount: " << SIZES_COUNT << endl;
+
     // Parse args
 
-    string pType;
-    string vType;
-    string vFlowType;
-    if (argc < 4){
+    string pTypeStr;
+    string vTypeStr;
+    string vFlowTypeStr;
+    if (argc < 4)
+    {
         cout << "Not enogh arguments" << endl;
         exit(1);
     }
-    else {
-        for (int i = 0; i < argc; ++i){
-            string arg{argv[i]};
-            if (arg.substr(0, 2) == "--"){
+    else
+    {
+        for (int i = 0; i < argc; ++i)
+        {
+            string arg{ argv[i] };
+            if (arg.substr(0, 2) == "--")
+            {
                 string paramType = {};
                 size_t arg_idx = 2;
-                while(arg[arg_idx] != '='){
+                while (arg[arg_idx] != '=')
+                {
                     paramType += arg[arg_idx];
                     ++arg_idx;
                 }
                 arg_idx++;
 
                 string value;
-                while(arg_idx < arg.size()){
+                while (arg_idx < arg.size())
+                {
                     value += arg[arg_idx];
                     ++arg_idx;
                 }
 
-                if (paramType == "p-type"){
-                    pType = value;
-                }
-                else if (paramType == "v-type"){
-                    vType = value;
-                }
-                else if (paramType == "v-flow-type"){
-                    vFlowType = value;
-                }
+                value = strToTypeStr(value);
 
+                if (paramType == "p-type")
+                {
+                    pTypeStr = value;
+                }
+                else if (paramType == "v-type")
+                {
+                    vTypeStr = value;
+                }
+                else if (paramType == "v-flow-type")
+                {
+                    vFlowTypeStr = value;
+                }
             }
         }
     }
@@ -654,13 +822,30 @@ int main(int argc, char** argv)
     printDelim();
 
     cout << "Types that will be used: " << endl;
-    cout << "p-type: " << pType << endl;
-    cout << "v-type: " << vType << endl;
-    cout << "v-flow-type: " << vFlowType << endl;
+    cout << "p-type: " << pTypeStr << endl;
+    cout << "v-type: " << vTypeStr << endl;
+    cout << "v-flow-type: " << vFlowTypeStr << endl;
 
-    assert(!pType.empty());
-    assert(!vType.empty());
-    assert(!vFlowType.empty());
+    assert(!pTypeStr.empty());
+    assert(!vTypeStr.empty());
+    assert(!vFlowTypeStr.empty());
+
+    // Choose instance
+
+    strToType(pTypeStr,
+              [&]<typename pType>
+              {
+                  strToType(vTypeStr,
+                            [&]<typename vType>
+                            {
+                                strToType(vFlowTypeStr,
+                                          [&]<typename vFlowType>
+                                          {
+                                            FluidSim<pType, vType, vFlowType, N, M> sim;
+                                            (void) sim;
+                                          });
+                            });
+              });
 
     return 0;
 }

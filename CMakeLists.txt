@@ -10,11 +10,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+set(SIZES "" CACHE STRING "Sizes of field")
+
 set(TYPES "" CACHE STRING "Types for compilation")
 
 message(STATUS ${TYPES})
+message(STATUS ${SIZES})
 
 add_compile_definitions(TYPES=${TYPES})
+add_compile_definitions(SIZES=${SIZES})
 
 add_compile_options("-Wall")
 add_compile_options("-Werror")
