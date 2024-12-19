@@ -8,8 +8,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 set(SIZES "" CACHE STRING "Sizes of field")
 
 set(TYPES "" CACHE STRING "Types for compilation")
@@ -30,3 +28,5 @@ include_directories(${PROJECT_SOURCE_DIR}/include)
 file(GLOB_RECURSE REPO_SRC src/*.cpp)
 
 add_executable(fluid src/fluid.cpp)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

@@ -1,4 +1,5 @@
 #include <bits/stdc++.h>
+#include <vector>
 
 using namespace std;
 
@@ -20,34 +21,25 @@ public:
         size_t m = 0;
         bool flag = true;
 
-        vector<vector<char>> matrix;
-
         string line;
 
         while (getline(inputFile, line))
         {
-            //cout << " " << line << endl;
-            vector<char> row;
-            stringstream ss(line);
-            char num;
-
-            while (ss >> num)
-            {
-                row.push_back(num);
-                if (flag)
-                {
-                    m++;
-                }
+            // cout << " " << line << endl;
+            if (flag){
+                m = line.size() - 2;
+                flag = false;
             }
-            matrix.push_back(row);
-            n++;
-            flag = false;
+            vector<char> row;
+            for (auto&& c: line.substr(0, line.size() - 2)){
+                row.push_back(c);
+            }
+            field.push_back(row);
+            ++n;
         }
 
         N = n;
         M = m;
-
-        field = matrix;
     }
 
 public:
