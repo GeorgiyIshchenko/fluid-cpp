@@ -1,3 +1,4 @@
+#include "field_reader.h"
 #include <array>
 #include <bits/stdc++.h>
 #include <cassert>
@@ -9,8 +10,10 @@
 #include <iostream>
 #include <regex>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 using namespace std;
 
@@ -117,10 +120,11 @@ template <size_t N, size_t M, bool isFast> struct Fixed
     {
         if (M >= M2)
         {
-            v = f.v << (M - M2);
+            v = f.v << (M - M2); // NOLINT
         }
-        else {
-            v = f.v >> (M2 - M);
+        else
+        {
+            v = f.v >> (M2 - M); // NOLINT
         }
     }
 
@@ -206,7 +210,8 @@ Fixed<N1, K1, isFast1> operator/(Fixed<N1, K1, isFast1> a,
                                  Fixed<N2, K2, isFast2> b)
 {
     Fixed<N1, K1, isFast1> bToA(b);
-    if (bToA.v == 0){
+    if (bToA.v == 0)
+    {
         return Fixed<N1, K1, isFast1>::from_raw(((int64_t)a.v << K1) / 1);
     }
     return Fixed<N1, K1, isFast1>::from_raw(((int64_t)a.v << K1) / bToA.v);
@@ -433,14 +438,18 @@ floating_point auto& operator/=(floating_point auto& a,
 
 // END floating_point auto op FIXED2
 
-constexpr array<string, TYPES_COUNT> parseTypesStr()
+constexpr array<string, TYPES_COUNT + SIZES_COUNT> parseTypesStr()
 {
-    array<string, TYPES_COUNT> result;
+    array<string, TYPES_COUNT + SIZES_COUNT> result;
     string typesString(TYPES_STRING);
+    typesString = typesString.substr(1, typesString.size() - 2);
+    string sizesString(SIZES_STRING);
+    sizesString = sizesString.substr(1, sizesString.size() - 2);
+    typesString = typesString + "," + sizesString;
     size_t current_word_idx = 0;
     string curent_word = {};
     bool openedAngleBracket = false;
-    for (size_t i = 1; i < typesString.size() - 1; ++i)
+    for (size_t i = 0; i < typesString.size(); ++i)
     {
         if (typesString[i] == '<')
         {
@@ -462,21 +471,22 @@ constexpr array<string, TYPES_COUNT> parseTypesStr()
             curent_word += typesString[i];
         }
     }
-    result[TYPES_COUNT - 1] = curent_word;
+    result[TYPES_COUNT + SIZES_COUNT - 1] = curent_word;
     return result;
 };
 
 auto typesStrArr = parseTypesStr();
 
 template <typename F, typename... Ts, size_t... Is>
-constexpr auto chooseTemplate(std::string_view name, F f,
-                              std::index_sequence<Is...> ind) -> void
+constexpr auto chooseTemplate(std::string name, F f,
+                              std::index_sequence<Is...> ind,
+                              size_t offset) -> void
 {
     (void)ind;
     (
         [&]<size_t i>
         {
-            if (typesStrArr[i] == name)
+            if (typesStrArr[i + offset] == name)
             {
                 f.template operator()<std::remove_cvref_t<decltype(std::get<i>(
                     std::tuple<Ts...>()))>>();
@@ -485,10 +495,18 @@ constexpr auto chooseTemplate(std::string_view name, F f,
         ...);
 }
 
-void strToType(std::string_view arg, auto f)
+void strToType(std::string arg, auto f)
 {
-    chooseTemplate<decltype(f), TYPES>(arg, f,
-                                       std::index_sequence_for<TYPES>{});
+    chooseTemplate<decltype(f), TYPES>(arg, f, std::index_sequence_for<TYPES>{},
+                                       0);
+}
+
+void numsToSize(size_t N, size_t M, auto f)
+{
+    auto compileSizeStr =
+        "CompileSize<" + to_string(N) + ", " + to_string(M) + ">";
+    chooseTemplate<decltype(f), SIZES>(
+        compileSizeStr, f, std::index_sequence_for<SIZES>{}, TYPES_COUNT);
 }
 
 string strToTypeStr(string& name)
@@ -529,105 +547,21 @@ public:
         { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }
     };
 
-    // inline static char field[N][M + 1] = {
-    //     "#####",
-    //     "#.  #",
-    //     "#.# #",
-    //     "#.# #",
-    //     "#.# #",
-    //     "#.# #",
-    //     "#.# #",
-    //     "#.# #",
-    //     "#...#",
-    //     "#####",
-    //     "#   #",
-    //     "#   #",
-    //     "#   #",
-    //     "#####",
-    // };
-
-    inline static char field[N][M + 1] = {
-        "######################################################################"
-        "##############",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                       .........                     "
-        "             #",
-        "#..............#            #           .........                     "
-        "             #",
-        "#..............#            #           .........                     "
-        "             #",
-        "#..............#            #           .........                     "
-        "             #",
-        "#..............#            #                                         "
-        "             #",
-        "#..............#            #                                         "
-        "             #",
-        "#..............#            #                                         "
-        "             #",
-        "#..............#            #                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............#                                         "
-        "             #",
-        "#..............#............################                     #    "
-        "             #",
-        "#...........................#....................................#    "
-        "             #",
-        "#...........................#....................................#    "
-        "             #",
-        "#...........................#....................................#    "
-        "             #",
-        "##################################################################    "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "#                                                                     "
-        "             #",
-        "######################################################################"
-        "##############",
-    };
+    inline static conditional_t<N * M != 0, array<array<char, M>, N>,
+                                vector<vector<char>>>
+        field{};
 
     inline static vType rho[256]{};
 
-    inline static pType p[N][M]{}, old_p[N][M]{};
+    inline static conditional_t<N * M != 0, array<array<pType, M>, N>,
+                                vector<vector<pType>>>
+        p{}, old_p{};
 
     template <typename T> struct VectorField
     {
-        array<T, deltas.size()> v[N][M];
+        conditional_t<N * M != 0, array<array<array<T, deltas.size()>, M>, N>,
+                      vector<vector<array<T, deltas.size()>>>>
+            v{};
 
         template <typename V> T& add(int x, int y, int dx, int dy, V dv)
         {
@@ -643,7 +577,9 @@ public:
     };
 
     inline static VectorField<vType> velocity{}, velocity_flow{};
-    inline static int last_use[N][M]{};
+    inline static conditional_t<N * M != 0, array<array<int, M>, N>,
+                                vector<vector<int>>>
+        last_use{};
     inline static int UT = 0;
 
     mt19937 rnd{ 1337 };
@@ -675,7 +611,8 @@ public:
                 {
                     velocity_flow.add(x, y, dx, dy, static_cast<double>(vp));
                     // last_use[x][y] = UT;
-                    // cerr << "A " << x << " " << y << " -> " << nx << " " << ny
+                    // cerr << "A " << x << " " << y << " -> " << nx << " " <<
+                    // ny
                     //      << " " << vp << " / " << lim << "\n";
                     return { static_cast<vFlowType>(vp), 1, { nx, ny } };
                 }
@@ -685,7 +622,8 @@ public:
                 {
                     velocity_flow.add(x, y, dx, dy, t);
                     // last_use[x][y] = UT;
-                    // cerr << "B " << x << " " << y << " -> " << nx << " " << ny
+                    // cerr << "B " << x << " " << y << " -> " << nx << " " <<
+                    // ny
                     //      << " " << t << " / " << lim << "\n";
                     return { t, prop && end != pair(x, y), end };
                 }
@@ -837,7 +775,8 @@ public:
         return ret;
     }
 
-    pType dirs[N][M]{};
+    conditional_t<N * M != 0, array<array<pType, M>, N>, vector<vector<pType>>>
+        dirs{};
 };
 
 template <typename pType, typename vType, typename vFlowType, size_t N,
@@ -879,7 +818,11 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
         }
 
         // Apply forces from p
-        memcpy(sim.old_p, sim.p, sizeof(sim.p));
+        // memcpy(sim.old_p, sim.p, sizeof(sim.p));
+        for (size_t i = 0; i < sizeof(sim.p); ++i)
+        {
+            sim.old_p[i] = sim.p[i];
+        }
         for (size_t x = 0; x < N; ++x)
         {
             for (size_t y = 0; y < M; ++y)
@@ -996,7 +939,10 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
             cout << "Tick " << i << ":\n";
             for (size_t x = 0; x < N; ++x)
             {
-                cout << sim.field[x] << "\n";
+                for (size_t y = 0; y < M; ++y){
+                    cout << sim.field[x][y];
+                }
+                cout << "\n";
             }
         }
     }
@@ -1040,6 +986,7 @@ int main(int argc, char** argv)
     string pTypeStr;
     string vTypeStr;
     string vFlowTypeStr;
+    string fieldPath;
     if (argc < 4)
     {
         cout << "Not enogh arguments" << endl;
@@ -1066,6 +1013,12 @@ int main(int argc, char** argv)
                 {
                     value += arg[arg_idx];
                     ++arg_idx;
+                }
+
+                if (paramType == "field")
+                {
+                    fieldPath = value;
+                    continue;
                 }
 
                 value = strToTypeStr(value);
@@ -1097,10 +1050,20 @@ int main(int argc, char** argv)
     assert(!vTypeStr.empty());
     assert(!vFlowTypeStr.empty());
 
+    // Create field
+
+    printDelim();
+
+    FieldReader fr{ fieldPath };
+
+    cout << "Field read successfully" << endl;
+    cout << "Field sizes: " << fr.N << "x" << fr.M << endl;
+
     // Choose instance
 
-    const int N = 36;
-    const int M = 84;
+    printDelim();
+
+    bool sizeMatches = false;
 
     strToType(
         pTypeStr,
@@ -1112,16 +1075,36 @@ int main(int argc, char** argv)
                 [&]<typename vType>
                 {
                     cout << "vType chosen successfully: " << vTypeStr << endl;
-                    strToType(vFlowTypeStr,
-                              [&]<typename vFlowType>
-                              {
-                                  cout << "vFlowType chosen successfully: "
-                                       << vFlowTypeStr << endl;
-                                  printDelim();
-                                  cout << "Starting simultaion..." << endl;
-                                  FluidSim<pType, vType, vFlowType, N, M> sim;
-                                  do_main<pType, vType, vFlowType, N, M>(sim);
-                              });
+                    strToType(
+                        vFlowTypeStr,
+                        [&]<typename vFlowType>
+                        {
+                            cout << "vFlowType chosen successfully: "
+                                 << vFlowTypeStr << endl;
+                            printDelim();
+                            numsToSize(
+                                fr.N, fr.M,
+                                [&]<typename sizeType>
+                                {
+                                    sizeMatches = true;
+                                    cout << "Sizes matched: " << fr.N << "x"
+                                         << fr.M << endl;
+                                    cout << "Starting simultaion..." << endl;
+                                    FluidSim<pType, vType, vFlowType,
+                                             sizeType::n, sizeType::m>
+                                        sim;
+                                    do_main<pType, vType, vFlowType,
+                                            sizeType::n, sizeType::m>(sim);
+                                });
+
+                            if (!sizeMatches)
+                            {
+                                cout << "Sizes do not match" << endl;
+                                cout << "Starting simultaion..." << endl;
+                                FluidSim<pType, vType, vFlowType, 0, 0> sim;
+                                do_main<pType, vType, vFlowType, 0, 0>(sim);
+                            }
+                        });
                 });
         });
 
