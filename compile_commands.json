@@ -1,12 +1,12 @@
 [
 {
   "directory": "/home/rnsns/hse/cxx/fluid-cpp/build",
-  "command": "/usr/bin/clang++-18 -DSIZES=\"S(36,84)\" -DTHREAD_NUM=4 -DTYPES=\"FAST_FIXED(32,11)\" -I/home/rnsns/hse/cxx/fluid-cpp/include -Wall -Wextra -pedantic -fprofile-instr-generate -fcoverage-mapping -O2 -fopenmp=libomp -O3 -DNDEBUG -Wall -Werror -Wextra -DDEBUG -DBENCH -std=c++20 -o CMakeFiles/fluid.dir/src/fluid.cpp.o -c /home/rnsns/hse/cxx/fluid-cpp/src/fluid.cpp",
+  "command": "/usr/bin/clang++-18 -DSIZES=\"S(36,84)\" -DTHREAD_NUM=4 -DTYPES=\"FAST_FIXED(64,8)\" -I/home/rnsns/hse/cxx/fluid-cpp/include -Wall -Wextra -pedantic -fprofile-instr-generate -fcoverage-mapping -O2 -fopenmp=libomp -O3 -DNDEBUG -Wall -Werror -Wextra -DDEBUG -DBENCH -std=c++20 -o CMakeFiles/fluid.dir/src/fluid.cpp.o -c /home/rnsns/hse/cxx/fluid-cpp/src/fluid.cpp",
   "file": "/home/rnsns/hse/cxx/fluid-cpp/src/fluid.cpp"
 },
 {
   "directory": "/home/rnsns/hse/cxx/fluid-cpp/build",
-  "command": "/usr/bin/clang++-18 -DSIZES=\"S(36,84)\" -DTHREAD_NUM=4 -DTYPES=\"FAST_FIXED(32,11)\" -I/home/rnsns/hse/cxx/fluid-cpp/include -Wall -Wextra -pedantic -fprofile-instr-generate -fcoverage-mapping -O2 -fopenmp=libomp -O3 -DNDEBUG -Wall -Werror -Wextra -DDEBUG -DBENCH -std=c++20 -o CMakeFiles/fluid-stupid.dir/src/fluid_stupid.cpp.o -c /home/rnsns/hse/cxx/fluid-cpp/src/fluid_stupid.cpp",
+  "command": "/usr/bin/clang++-18 -DSIZES=\"S(36,84)\" -DTHREAD_NUM=4 -DTYPES=\"FAST_FIXED(64,8)\" -I/home/rnsns/hse/cxx/fluid-cpp/include -Wall -Wextra -pedantic -fprofile-instr-generate -fcoverage-mapping -O2 -fopenmp=libomp -O3 -DNDEBUG -Wall -Werror -Wextra -DDEBUG -DBENCH -std=c++20 -o CMakeFiles/fluid-stupid.dir/src/fluid_stupid.cpp.o -c /home/rnsns/hse/cxx/fluid-cpp/src/fluid_stupid.cpp",
   "file": "/home/rnsns/hse/cxx/fluid-cpp/src/fluid_stupid.cpp"
 }
 ]

@@ -7,7 +7,7 @@ cmake -S . \
       -G Ninja \
       -DCMAKE_CXX_COMPILER=clang++-18 \
       -DCMAKE_C_COMPILER=clang-18 \
-      -DTYPES="FAST_FIXED(32,11)" \
+      -DTYPES="FAST_FIXED(64,8)" \
       -DSIZES="S(36,84)" \
       -DCMAKE_CXX_FLAGS="-Wall -Wextra -pedantic -fprofile-instr-generate -fcoverage-mapping -O2 -fopenmp=libomp" \
       -DCMAKE_BUILD_TYPE=Debug \
@@ -20,5 +20,5 @@ cmake --build build --parallel $(nproc)
 cp -f build/compile_commands.json .
 
 #./build/fluid --p-type=FLOAT --v-type=FAST_FIXED\(32,5\) --v-flow-type=FAST_FIXED\(32,5\) --field="fields/example1"
-./build/fluid --p-type=FAST_FIXED\(32,11\) --v-type=FAST_FIXED\(32,11\) --v-flow-type=FAST_FIXED\(32,11\) --field="fields/example1" --j=1
+./build/fluid --p-type=FAST_FIXED\(64,8\) --v-type=FAST_FIXED\(64,8\) --v-flow-type=FAST_FIXED\(64,8\) --field="fields/example1" --j=2
 #./build/fluid-stupid

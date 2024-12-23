@@ -116,7 +116,7 @@ public:
                     while (true)
                     {
                         start_barrier.arrive_and_wait();
-                        //cout << "WORKER" << "\n";
+                        // cout << "WORKER" << "\n";
                         for (size_t x = 0; x < n; ++x)
                         {
                             for (size_t y = border.first; y < border.second;
@@ -126,23 +126,6 @@ public:
                                 {
                                     auto [t, local_prop, _] =
                                         propagate_flow(x, y, 1, true, border);
-                                    if (t > 0.)
-                                    {
-                                        prop = 1;
-                                    }
-                                }
-                            }
-                        }
-
-                        for (size_t x = 0; x < n; ++x)
-                        {
-                            if (border.second != m)
-                            {
-                                if (field[x][border.second] != '#' &&
-                                    last_use[x][border.second] != UT)
-                                {
-                                    auto [t, local_prop, _] =
-                                        propagate_flow(x, border.second, 1);
                                     if (t > 0.)
                                     {
                                         prop = 1;
@@ -531,11 +514,31 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
         do
         {
             sim.UT += 2;
-            
+
             sim.prop = 0;
 
             sim.start_barrier.arrive_and_wait();
             sim.end_barrier.arrive_and_wait();
+
+            for (auto&& border : sim.borders.borders)
+            {
+                for (size_t x = 0; x < sim.n; ++x)
+                {
+                    if (border.second != sim.m)
+                    {
+                        if (sim.field[x][border.second] != '#' &&
+                            sim.last_use[x][border.second] != sim.UT)
+                        {
+                            auto [t, local_prop, _] =
+                                propagate_flow(x, border.second, 1);
+                            if (t > 0.)
+                            {
+                                sim.prop = 1;
+                            }
+                        }
+                    }
+                }
+            }
 
         } while (sim.prop);
 
