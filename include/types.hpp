@@ -1,4 +1,5 @@
 #include <bits/stdc++.h>
+#include <cstddef>
 
 using namespace std;
 
@@ -498,3 +499,17 @@ string strToTypeStr(string& name)
     }
     throw runtime_error("Unknown input type: " + name);
 }
+
+using PropogateFlowBorder = pair<size_t, size_t>;
+
+struct PropogateFlowBorders{
+    vector<PropogateFlowBorder> borders;
+
+    PropogateFlowBorders(size_t m, size_t parts){
+        size_t step = m / parts;
+        for (size_t i = 0; i < parts; ++i){
+            borders.push_back({i * step, min((i + 1) * step, m)});
+        }
+    }
+
+};

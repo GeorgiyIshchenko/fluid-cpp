@@ -1,29 +1,49 @@
 #include "field_reader.hpp"
-#include "types.h"
+#include "thread_pool.hpp"
+#include "types.hpp"
 #include <array>
+#include <barrier>
 #include <bits/stdc++.h>
 #include <cassert>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
+#include <functional>
 #include <iostream>
+#include <omp.h>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <vector>
 
-template <typename pType, typename vType, typename vFlowType, int N, int M,
-          bool sizeMatch>
+template <typename vFlowType> struct BFSNode
+{
+    int x, y;
+    vFlowType lim;
+};
+
+size_t global_n;
+size_t global_m;
+
+template <typename pType, typename vType, typename vFlowType, int N, int M>
 class FluidSim
 {
 public:
-    // constexpr size_t N = 14, M = 5;
+    size_t n;
+    size_t m;
+    bool prop = false;
+    int num_threads = 1;
 
-    size_t n = N;
-    size_t m = M;
+    std::vector<thread> workers;
+    std::barrier<std::function<void(void)>> start_barrier, end_barrier;
+
+    PropogateFlowBorders borders;
+
+    constexpr static bool sizeMatch = (N * M) != 0;
 
     constexpr static size_t T = 1'000'000;
-    inline static std::array<pair<int, int>, 4> deltas = {
+    constexpr inline static std::array<pair<int, int>, 4> deltas = {
         { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }
     };
 
@@ -41,22 +61,26 @@ public:
     template <typename T> struct VectorField
     {
         conditional_t<sizeMatch, array<array<array<T, deltas.size()>, M>, N>,
-                      vector<vector<array<T, deltas.size()>>>>
+                      vector<vector<vector<T>>>>
             v{};
 
-        // VectorField()
-        //     requires(!sizeMatch)
-        // {
-        //     v.resize(N);
-        //     for(int i = 0; i < N; ++i){
-        //         v[i].resize(M);
-        //         for(int j = 0; j < M; ++j){
-        //             v[i][j].resize(deltas.size());
-        //         }
-        //     }
-        // }
+        VectorField()
+            requires(!sizeMatch)
+        {
+            v.resize(global_n);
+            for (size_t i = 0; i < global_n; ++i)
+            {
+                v[i].resize(global_m);
+                for (size_t j = 0; j < global_m; ++j)
+                {
+                    v[i][j].resize(deltas.size());
+                }
+            }
+        }
 
-        // VectorField() requires(sizeMatch) = default;
+        VectorField()
+            requires(sizeMatch)
+        = default;
 
         template <typename V> T& add(int x, int y, int dx, int dy, V dv)
         {
@@ -82,8 +106,62 @@ public:
 
     mt19937 rnd{ 1337 };
 
-    FluidSim(FieldReader& inpField)
+    void init_workers()
+    {
+        for (auto&& border : borders.borders)
+        {
+            workers.emplace_back(
+                [this, &border]()
+                {
+                    while (true)
+                    {
+                        start_barrier.arrive_and_wait();
+                        //cout << "WORKER" << "\n";
+                        for (size_t x = 0; x < n; ++x)
+                        {
+                            for (size_t y = border.first; y < border.second;
+                                 ++y)
+                            {
+                                if (field[x][y] != '#' && last_use[x][y] != UT)
+                                {
+                                    auto [t, local_prop, _] =
+                                        propagate_flow(x, y, 1, true, border);
+                                    if (t > 0.)
+                                    {
+                                        prop = 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        for (size_t x = 0; x < n; ++x)
+                        {
+                            if (border.second != m)
+                            {
+                                if (field[x][border.second] != '#' &&
+                                    last_use[x][border.second] != UT)
+                                {
+                                    auto [t, local_prop, _] =
+                                        propagate_flow(x, border.second, 1);
+                                    if (t > 0.)
+                                    {
+                                        prop = 1;
+                                    }
+                                }
+                            }
+                        }
+                        end_barrier.arrive_and_wait();
+                    }
+                });
+        }
+    }
+
+    FluidSim(FieldReader& inpField, int num_threads)
         requires(sizeMatch)
+        : num_threads(num_threads),
+          start_barrier(num_threads + 1, []() {}),
+          end_barrier(num_threads + 1, []() {}),
+          borders(inpField.M, num_threads)
     {
         n = inpField.N;
         m = inpField.M;
@@ -105,15 +183,22 @@ public:
                 field[i][j] = inpField.field[i][j];
             }
         }
+
+        init_workers();
+
         cout << "CTOR SUCCESSED!" << endl;
     }
 
-    FluidSim(FieldReader& inpField)
+    FluidSim(FieldReader& inpField, int num_threads)
         requires(!sizeMatch)
+        : num_threads(num_threads),
+          start_barrier(num_threads, []() {}),
+          end_barrier(num_threads, []() {}),
+          borders(inpField.M, num_threads)
     {
         n = inpField.N;
         m = inpField.M;
-        cout << "STATIC FLUID CTOR: " << n << " " << m << " "
+        cout << "DYNAMIC FLUID CTOR: " << n << " " << m << " "
              << inpField.field.size() << " " << inpField.field[0].size()
              << endl;
         for (size_t i = 0; i < n; ++i)
@@ -132,20 +217,34 @@ public:
                 field[i][j] = inpField.field[i][j];
             }
         }
-        // p.resize(n, vector<pType>(m, 0));
-        // old_p.resize(n, vector<pType>(m, 0));
-        // last_use.resize(n, vector<int>(m, 0));
-        // dirs.resize(N, vector<vector<pType>>(M, 0));
+
+        init_workers();
+
+        p.resize(n, vector<pType>(m, 0));
+        old_p.resize(n, vector<pType>(m, 0));
+        last_use.resize(n, vector<int>(m, 0));
+        dirs.resize(n, vector<pType>(m, 0));
     }
 
-    tuple<vFlowType, bool, pair<int, int>> propagate_flow(int x, int y,
-                                                          vFlowType lim)
+    tuple<vFlowType, bool, pair<int, int>>
+    propagate_flow(int x, int y, vFlowType lim, bool checkBorders = false,
+                   PropogateFlowBorder border = { 0, 0 })
     {
         last_use[x][y] = UT - 1;
         vFlowType ret = 0;
         for (auto [dx, dy] : deltas)
         {
             int nx = x + dx, ny = y + dy;
+
+            if (checkBorders)
+            {
+                if (static_cast<size_t>(ny) < border.first ||
+                    static_cast<size_t>(ny) >= border.second)
+                {
+                    continue;
+                }
+            }
+
             if (field[nx][ny] != '#' && last_use[nx][ny] < UT)
             {
                 auto cap = velocity.get(x, y, dx, dy);
@@ -246,7 +345,21 @@ public:
     {
         char type;
         pType cur_p;
-        array<vType, deltas.size()> v;
+        // array<vType, deltas.size()> v;
+
+        inline static conditional_t<sizeMatch, array<vType, deltas.size()>,
+                                    vector<vType>>
+            v;
+
+        ParticleParams()
+            requires(sizeMatch)
+        = default;
+
+        ParticleParams()
+            requires(!sizeMatch)
+        {
+            v.resize(deltas.size());
+        }
 
         void swap_with(int x, int y)
         {
@@ -326,14 +439,20 @@ public:
 };
 
 template <typename pType, typename vType, typename vFlowType, size_t N,
-          size_t M, bool flag>
-void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
+          size_t M>
+void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
 {
     cout << "Starting simultaion..." << endl;
+#ifdef BENCH
+    auto start = chrono::high_resolution_clock::now();
+#endif
     sim.rho[' '] = 0.01;
     sim.rho['.'] = 1000;
     pType g = 0.1;
 
+#ifdef TEST_OMP
+#pragma omp parallel for num_threads(THREAD_NUM)
+#endif
     for (size_t x = 0; x < sim.n; ++x)
     {
         for (size_t y = 0; y < sim.m; ++y)
@@ -353,9 +472,9 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
 
         pType total_delta_p = 0;
         // Apply external forces
-        for (size_t x = 0; x < N; ++x)
+        for (size_t x = 0; x < sim.n; ++x)
         {
-            for (size_t y = 0; y < M; ++y)
+            for (size_t y = 0; y < sim.m; ++y)
             {
                 if (sim.field[x][y] == '#')
                     continue;
@@ -366,6 +485,9 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
 
         // Apply forces from p
         // memcpy(sim.old_p, sim.p, sizeof(sim.p));
+#ifdef TEST_OMP
+#pragma omp parallel
+#endif
         for (size_t i = 0; i < sim.n; ++i)
         {
             sim.old_p[i] = sim.p[i];
@@ -405,31 +527,22 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
 
         // Make flow from velocities
         sim.velocity_flow = {};
-        bool prop = false;
+        sim.prop = false;
         do
         {
             sim.UT += 2;
-            prop = 0;
-            for (size_t x = 0; x < N; ++x)
-            {
-                for (size_t y = 0; y < M; ++y)
-                {
-                    if (sim.field[x][y] != '#' && sim.last_use[x][y] != sim.UT)
-                    {
-                        auto [t, local_prop, _] = sim.propagate_flow(x, y, 1);
-                        if (t > 0.)
-                        {
-                            prop = 1;
-                        }
-                    }
-                }
-            }
-        } while (prop);
+            
+            sim.prop = 0;
+
+            sim.start_barrier.arrive_and_wait();
+            sim.end_barrier.arrive_and_wait();
+
+        } while (sim.prop);
 
         // Recalculate p with kinetic energy
-        for (size_t x = 0; x < N; ++x)
+        for (size_t x = 0; x < sim.n; ++x)
         {
-            for (size_t y = 0; y < M; ++y)
+            for (size_t y = 0; y < sim.m; ++y)
             {
                 if (sim.field[x][y] == '#')
                     continue;
@@ -462,7 +575,7 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
         }
 
         sim.UT += 2;
-        prop = false;
+        sim.prop = false;
         for (size_t x = 0; x < sim.n; ++x)
         {
             for (size_t y = 0; y < sim.m; ++y)
@@ -471,7 +584,7 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
                 {
                     if (sim.random01() < sim.move_prob(x, y))
                     {
-                        prop = true;
+                        sim.prop = true;
                         sim.propagate_move(x, y, true);
                     }
                     else
@@ -482,7 +595,7 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
             }
         }
 
-        if (prop)
+        if (sim.prop)
         {
             cout << "Tick " << i << ":\n";
             for (size_t x = 0; x < sim.n; ++x)
@@ -494,6 +607,16 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M, flag>& sim)
                 cout << "\n";
             }
         }
+
+#ifdef BENCH
+        if (i >= 1000)
+        {
+            auto now = chrono::high_resolution_clock::now();
+            std::chrono::duration<double> elapsed = now - start;
+            cout << "Time elapsed: " << elapsed.count() << " s\n";
+            break;
+        }
+#endif
     }
 }
 
@@ -536,6 +659,7 @@ int main(int argc, char** argv)
     string vTypeStr;
     string vFlowTypeStr;
     string fieldPath;
+    int numThreads;
     if (argc < 4)
     {
         cout << "Not enogh arguments" << endl;
@@ -567,6 +691,12 @@ int main(int argc, char** argv)
                 if (paramType == "field")
                 {
                     fieldPath = value;
+                    continue;
+                }
+
+                if (paramType == "j")
+                {
+                    numThreads = stoi(value);
                     continue;
                 }
 
@@ -605,8 +735,17 @@ int main(int argc, char** argv)
 
     FieldReader fr{ fieldPath };
 
+    global_n = fr.N;
+    global_m = fr.M;
+
     cout << "Field read successfully" << endl;
     cout << "Field sizes: " << fr.N << "x" << fr.M << endl;
+
+    // Thread num
+
+    printDelim();
+
+    cout << "Number of threads: " << numThreads << endl;
 
     // Choose instance
 
@@ -631,28 +770,26 @@ int main(int argc, char** argv)
                             cout << "vFlowType chosen successfully: "
                                  << vFlowTypeStr << endl;
                             printDelim();
-                            numsToSize(
-                                fr.N, fr.M,
-                                [&]<typename sizeType>
-                                {
-                                    sizeMatches = true;
-                                    cout << "Sizes matched: " << fr.N << "x"
-                                         << fr.M << endl;
-                                    FluidSim<pType, vType, vFlowType,
-                                             sizeType::n, sizeType::m, true>
-                                        sim(fr);
-                                    do_main<pType, vType, vFlowType,
-                                            sizeType::n, sizeType::m, true>(
-                                        sim);
-                                });
+                            numsToSize(fr.N, fr.M,
+                                       [&]<typename sizeType>
+                                       {
+                                           sizeMatches = true;
+                                           cout << "Sizes matched: " << fr.N
+                                                << "x" << fr.M << endl;
+                                           FluidSim<pType, vType, vFlowType,
+                                                    sizeType::n, sizeType::m>
+                                               sim(fr, numThreads);
+                                           do_main<pType, vType, vFlowType,
+                                                   sizeType::n, sizeType::m>(
+                                               sim);
+                                       });
 
                             if (!sizeMatches)
                             {
                                 cout << "Sizes do not match" << endl;
-                                FluidSim<pType, vType, vFlowType, 0, 0, false>
-                                    sim(fr);
-                                do_main<pType, vType, vFlowType, 0, 0, false>(
-                                    sim);
+                                FluidSim<pType, vType, vFlowType, 0, 0> sim(
+                                    fr, numThreads);
+                                do_main<pType, vType, vFlowType, 0, 0>(sim);
                             }
                         });
                 });
