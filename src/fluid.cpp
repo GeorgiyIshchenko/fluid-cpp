@@ -1,5 +1,4 @@
 #include "field_reader.hpp"
-#include "thread_pool.hpp"
 #include "types.hpp"
 #include <array>
 #include <barrier>
@@ -11,7 +10,6 @@
 #include <cstdio>
 #include <functional>
 #include <iostream>
-#include <omp.h>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -32,13 +30,14 @@ class FluidSim
 public:
     size_t n;
     size_t m;
-    bool prop = false;
+    bool simProp = false;
     int num_threads = 1;
+    bool alive = true;
 
     std::vector<thread> workers;
     std::barrier<std::function<void(void)>> start_barrier, end_barrier;
 
-    PropogateFlowBorders borders;
+    PropagateFlowBorders borders;
 
     constexpr static bool sizeMatch = (N * M) != 0;
 
@@ -113,14 +112,13 @@ public:
             workers.emplace_back(
                 [this, &border]()
                 {
-                    while (true)
+                    while (alive)
                     {
                         start_barrier.arrive_and_wait();
                         // cout << "WORKER" << "\n";
                         for (size_t x = 0; x < n; ++x)
                         {
-                            for (size_t y = border.first; y < border.second;
-                                 ++y)
+                            for (size_t y = (size_t)border.first; y < (size_t)border.second; ++y)
                             {
                                 if (field[x][y] != '#' && last_use[x][y] != UT)
                                 {
@@ -128,7 +126,7 @@ public:
                                         propagate_flow(x, y, 1, true, border);
                                     if (t > 0.)
                                     {
-                                        prop = 1;
+                                        simProp = 1;
                                     }
                                 }
                             }
@@ -209,9 +207,14 @@ public:
         dirs.resize(n, vector<pType>(m, 0));
     }
 
+    ~FluidSim()
+    {
+        alive = false;
+    }
+
     tuple<vFlowType, bool, pair<int, int>>
     propagate_flow(int x, int y, vFlowType lim, bool checkBorders = false,
-                   PropogateFlowBorder border = { 0, 0 })
+                   PropagateFlowBorder border = { 0, 0 })
     {
         last_use[x][y] = UT - 1;
         vFlowType ret = 0;
@@ -221,8 +224,8 @@ public:
 
             if (checkBorders)
             {
-                if (static_cast<size_t>(ny) < border.first ||
-                    static_cast<size_t>(ny) >= border.second)
+                if (ny < border.first ||
+                    ny >= border.second)
                 {
                     continue;
                 }
@@ -247,7 +250,8 @@ public:
                     //      << " " << vp << " / " << lim << "\n";
                     return { vp, 1, { nx, ny } };
                 }
-                auto [t, prop, end] = propagate_flow(nx, ny, vp);
+                auto [t, prop, end] =
+                    propagate_flow(nx, ny, vp, checkBorders, border);
                 ret += t;
                 if (prop)
                 {
@@ -433,9 +437,6 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
     sim.rho['.'] = 1000;
     pType g = 0.1;
 
-#ifdef TEST_OMP
-#pragma omp parallel for num_threads(THREAD_NUM)
-#endif
     for (size_t x = 0; x < sim.n; ++x)
     {
         for (size_t y = 0; y < sim.m; ++y)
@@ -468,9 +469,6 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
 
         // Apply forces from p
         // memcpy(sim.old_p, sim.p, sizeof(sim.p));
-#ifdef TEST_OMP
-#pragma omp parallel
-#endif
         for (size_t i = 0; i < sim.n; ++i)
         {
             sim.old_p[i] = sim.p[i];
@@ -510,12 +508,12 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
 
         // Make flow from velocities
         sim.velocity_flow = {};
-        sim.prop = false;
+        sim.simProp = false;
         do
         {
             sim.UT += 2;
 
-            sim.prop = 0;
+            sim.simProp = false;
 
             sim.start_barrier.arrive_and_wait();
             sim.end_barrier.arrive_and_wait();
@@ -524,23 +522,23 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
             {
                 for (size_t x = 0; x < sim.n; ++x)
                 {
-                    if (border.second != sim.m)
+                    if ((size_t)border.second < sim.m)
                     {
                         if (sim.field[x][border.second] != '#' &&
                             sim.last_use[x][border.second] != sim.UT)
                         {
                             auto [t, local_prop, _] =
-                                propagate_flow(x, border.second, 1);
+                                sim.propagate_flow(x, border.second, 1, false);
                             if (t > 0.)
                             {
-                                sim.prop = 1;
+                                sim.simProp = 1;
                             }
                         }
                     }
                 }
             }
 
-        } while (sim.prop);
+        } while (sim.simProp);
 
         // Recalculate p with kinetic energy
         for (size_t x = 0; x < sim.n; ++x)
@@ -578,7 +576,7 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
         }
 
         sim.UT += 2;
-        sim.prop = false;
+        sim.simProp = false;
         for (size_t x = 0; x < sim.n; ++x)
         {
             for (size_t y = 0; y < sim.m; ++y)
@@ -587,7 +585,7 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
                 {
                     if (sim.random01() < sim.move_prob(x, y))
                     {
-                        sim.prop = true;
+                        sim.simProp = true;
                         sim.propagate_move(x, y, true);
                     }
                     else
@@ -598,7 +596,7 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
             }
         }
 
-        if (sim.prop)
+        if (sim.simProp)
         {
             cout << "Tick " << i << ":\n";
             for (size_t x = 0; x < sim.n; ++x)
@@ -616,8 +614,7 @@ void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
         {
             auto now = chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = now - start;
-            cout << "Time elapsed: " << elapsed.count() << " s\n";
-            break;
+            cout << "Time elapsed: " << elapsed.count() << " s\n";            break;
         }
 #endif
     }

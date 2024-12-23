@@ -500,16 +500,23 @@ string strToTypeStr(string& name)
     throw runtime_error("Unknown input type: " + name);
 }
 
-using PropogateFlowBorder = pair<size_t, size_t>;
+using PropagateFlowBorder = pair<int, int>;
 
-struct PropogateFlowBorders{
-    vector<PropogateFlowBorder> borders;
+struct PropagateFlowBorders{
+    vector<PropagateFlowBorder> borders;
 
-    PropogateFlowBorders(size_t m, size_t parts){
-        size_t step = m / parts;
-        for (size_t i = 0; i < parts; ++i){
-            borders.push_back({i * step, min((i + 1) * step, m)});
+    PropagateFlowBorders(int m, int parts){
+        int step = m / parts;
+        for (int i = 0; i < parts + 1; ++i){
+            if (i * step != min((i + 1) * step, m))
+                borders.push_back({i * step, min((i + 1) * step, m)});
         }
+
+        cout << "Borders: ";
+        for(auto&& b: borders){
+            cout << "{" << b.first << "," << b.second << "}" << " ";
+        }
+        cout << endl;
     }
 
 };
