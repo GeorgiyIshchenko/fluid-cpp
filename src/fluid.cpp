@@ -32,7 +32,7 @@ public:
     size_t n;
     size_t m;
     int num_threads = 1;
-    bool prop = false;
+    atomic<bool> prop = false;
     bool alive = true;
 
     std::vector<jthread> workers;
@@ -75,9 +75,9 @@ public:
                 for (size_t j = 0; j < global_m; ++j)
                 {
                     v[i][j].resize(deltas.size());
-                    //cout << static_cast<double>(v[i][j][0]);
+                    // cout << static_cast<double>(v[i][j][0]);
                 }
-                //cout << "\n";
+                // cout << "\n";
             }
         }
 
@@ -99,9 +99,9 @@ public:
     };
 
     inline static VectorField<vType> velocity, velocity_flow;
-    inline static conditional_t<sizeMatch, array<array<int, M>, N>,
-                                vector<vector<int>>>
-        last_use{};
+    using last_uded_t =
+        conditional_t<sizeMatch, array<array<int, M>, N>, vector<vector<int>>>;
+    inline static last_uded_t last_use{}, last_use_copy{};
     inline static int UT = 0;
 
     conditional_t<sizeMatch, array<array<pType, M>, N>, vector<vector<pType>>>
@@ -117,7 +117,7 @@ public:
 
     void init_workers()
     {
-        debug_thread.resize(num_threads);
+        debug_thread.resize(borders.borders.size());
         debug_thread_matrix.resize(n, vector<char>(m, '-'));
         for (size_t x = 0; x < n; ++x)
         {
@@ -136,23 +136,22 @@ public:
                     int c = i;
                     while (alive)
                     {
-                        debug_thread[c]++;
                         auto st = chrono::high_resolution_clock::now();
                         start_barrier.arrive_and_wait();
                         debug_elapsed_waiting +=
                             chrono::high_resolution_clock::now() - st;
                         // cout << "WORKER" << "\n";
-                        prop = false;
                         for (int x = 0; x < static_cast<int>(n); ++x)
                         {
                             for (int y = border.first; y < border.second; ++y)
                             {
-                                if (field[x][y] != '#' && last_use[x][y] != UT)
+                                if (field[x][y] != '#' && last_use_copy[x][y] != UT)
                                 {
                                     auto [t, local_prop, _] =
-                                        propagate_flow(x, y, 1, true, border);
+                                        propagate_flow(x, y, 1, last_use_copy, true, border);
                                     if (t > EPSILON)
                                     {
+                                        debug_thread[c]++;
                                         debug_thread_matrix[x][y] =
                                             to_string(c)[0];
                                         prop = true;
@@ -244,6 +243,7 @@ public:
         p = {};
         old_p = {};
         last_use = {};
+        last_use_copy = {};
         dirs = {};
 
         p.resize(n, vector<pType>(m, 0));
@@ -259,7 +259,7 @@ public:
     FluidSim(const FluidSim& other) = delete;
     FluidSim(FluidSim&& other) = delete;
 
-    pair<size_t, size_t> debug_missed = {0, 0};
+    pair<size_t, size_t> debug_missed = { 0, 0 };
 
     ~FluidSim()
     {
@@ -267,10 +267,10 @@ public:
     }
 
     tuple<vFlowType, bool, pair<int, int>>
-    propagate_flow(int x, int y, vFlowType lim, bool checkBorders = false,
+    propagate_flow(int x, int y, vFlowType lim, last_uded_t& last_use, bool checkBorders = false,
                    PropagateFlowBorder border = { 0, 0 })
     {
-        last_use[x][y] = UT - 1 - 2 * (!checkBorders);
+        last_use[x][y] = UT - 1;
         vFlowType ret = 0;
         for (auto [dx, dy] : deltas)
         {
@@ -286,8 +286,7 @@ public:
             }
             debug_missed.second++;
 
-            if (field[nx][ny] != '#' &&
-                last_use[nx][ny] < UT - 2 * (!checkBorders))
+            if (field[nx][ny] != '#' && last_use[nx][ny] < UT)
             {
                 auto cap = velocity.get(x, y, dx, dy);
                 auto flow = velocity_flow.get(x, y, dx, dy);
@@ -297,22 +296,22 @@ public:
                 }
                 // assert(v >= velocity_flow.get(x, y, dx, dy));
                 auto vp = min(lim, static_cast<vFlowType>(cap - flow));
-                if (last_use[nx][ny] == UT - 1 - 2 * (!checkBorders))
+                if (last_use[nx][ny] == UT - 1)
                 {
                     velocity_flow.add(x, y, dx, dy, vp);
-                    last_use[x][y] = UT - 2 * (!checkBorders);
+                    last_use[x][y] = UT;
                     // cerr << "A " << x << " " << y << " -> " << nx << " " <<
                     // ny
                     //      << " " << vp << " / " << lim << "\n";
                     return { vp, 1, { nx, ny } };
                 }
                 auto [t, prop, end] =
-                    propagate_flow(nx, ny, vp, checkBorders, border);
+                    propagate_flow(nx, ny, vp, last_use, checkBorders, border);
                 ret += t;
                 if (prop)
                 {
                     velocity_flow.add(x, y, dx, dy, t);
-                    last_use[x][y] = UT - 2 * (!checkBorders);
+                    last_use[x][y] = UT;
                     // cerr << "B " << x << " " << y << " -> " << nx << " " <<
                     // ny
                     //      << " " << t << " / " << lim << "\n";
@@ -451,8 +450,8 @@ public:
             auto [dx, dy] = deltas[d];
             nx = x + dx;
             ny = y + dy;
-            assert(abs(velocity.get(x, y, dx, dy)) > EPSILON && field[nx][ny] != '#' &&
-                   last_use[nx][ny] < UT);
+            assert(abs(velocity.get(x, y, dx, dy)) > EPSILON &&
+                   field[nx][ny] != '#' && last_use[nx][ny] < UT);
 
             ret = (last_use[nx][ny] == UT - 1 || propagate_move(nx, ny, false));
         } while (!ret);
@@ -472,12 +471,24 @@ public:
             if (!is_first)
             {
                 ParticleParams pp{};
+                debug_thread_matrix[x][y] = '$';
                 pp.swap_with(x, y);
                 pp.swap_with(nx, ny);
                 pp.swap_with(x, y);
             }
         }
         return ret;
+    }
+
+    void save_to_last_used_buffer()
+    {
+        for (size_t i = 0; i < n; ++i)
+        {
+            for (size_t j = 0; j < m; ++j)
+            {
+                last_use_copy[i][j] = last_use[i][j];
+            }
+        }
     }
 
     void run()
@@ -567,8 +578,7 @@ public:
 
                 prop = false;
 
-                start_barrier.arrive_and_wait();
-                end_barrier.arrive_and_wait();
+                save_to_last_used_buffer();
 
                 for (auto&& border : borders.borders)
                 {
@@ -580,13 +590,22 @@ public:
                                 last_use[x][border.second] != UT)
                             {
                                 auto [t, local_prop, _] =
-                                    propagate_flow(x, border.second, 1, false);
+                                    propagate_flow(x, border.second, 1, last_use, false);
                                 if (t > EPSILON)
                                 {
                                     prop = true;
                                 }
                             }
                         }
+                    }
+                }
+
+                start_barrier.arrive_and_wait();
+                end_barrier.arrive_and_wait();
+
+                for(size_t x = 0; x < n; ++x){
+                    for(size_t y = 0; y < 0; ++y){
+                        last_use[x][y] = max(last_use[x][y], last_use_copy[x][y]);
                     }
                 }
 
@@ -682,13 +701,26 @@ public:
                 cout << "Time elapsed: " << elapsed.count() << " s\n";
                 cout << "Waiting time elapsed " << debug_elapsed_waiting
                      << " s\n";
+                cout << "Props for thread: ";
                 for (auto a : debug_thread)
                 {
                     cout << a << " ";
                 }
                 cout << endl;
-                cout << "Missing stat: " << debug_missed.first << " " << debug_missed.second << " " << (double)debug_missed.first / debug_missed.second * 100 << "%" << endl;
-                break;
+                cout << "Missing border stat: " << debug_missed.first << " "
+                     << debug_missed.second << " "
+                     << (double)debug_missed.first / debug_missed.second * 100
+                     << "%" << endl;
+                cout << "Tick " << i << ":\n";
+                for (size_t x = 0; x < n; ++x)
+                {
+                    for (size_t y = 0; y < m; ++y)
+                    {
+                        cout << field[x][y];
+                    }
+                    cout << "\n";
+                }
+                return;
                 // exit(0);
             }
 #endif

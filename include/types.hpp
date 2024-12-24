@@ -123,8 +123,9 @@ template <size_t N, size_t M, bool isFast> struct Fixed
         return static_cast<float>(v) / (1ULL << M);
     }
 
-    static constexpr Fixed from_raw(
-        typename conditional_t<isFast, SuitableFastType<N>, SuitableType<N>>::type x)
+    static constexpr Fixed
+    from_raw(typename conditional_t<isFast, SuitableFastType<N>,
+                                    SuitableType<N>>::type x)
     {
         Fixed ret;
         ret.v = x;
@@ -502,21 +503,32 @@ string strToTypeStr(string& name)
 
 using PropagateFlowBorder = pair<int, int>;
 
-struct PropagateFlowBorders{
+struct PropagateFlowBorders
+{
     vector<PropagateFlowBorder> borders;
 
-    PropagateFlowBorders(int m, int parts){
+    PropagateFlowBorders(int m, int parts)
+    {
         int step = m / parts;
-        for (int i = 0; i < parts + 1; ++i){
+        for (int i = 0; i < parts + 1; ++i)
+        {
             if (i * step != min((i + 1) * step, m))
-                borders.push_back({i * step, min((i + 1) * step, m)});
+            {
+                borders.push_back({ i * step, min((i + 1) * step, m) });
+                // if (static_cast<int>(((i + 1.5)) * step) < m)
+                // {
+                //     borders.push_back(
+                //         { (i + 0.5) * step,
+                //           min(static_cast<int>(((i + 1.5)) * step), m) });
+                // }
+            }
         }
 
         cout << "Borders: ";
-        for(auto&& b: borders){
+        for (auto&& b : borders)
+        {
             cout << "{" << b.first << "," << b.second << "}" << " ";
         }
         cout << endl;
     }
-
 };
