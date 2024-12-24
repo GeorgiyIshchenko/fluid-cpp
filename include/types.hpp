@@ -5,7 +5,7 @@ using namespace std;
 
 // constants
 
-#define EPSILON 1e-11
+#define EPSILON 1e-8
 
 // helpers
 

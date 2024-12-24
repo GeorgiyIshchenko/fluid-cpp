@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <functional>
 #include <iostream>
+#include <omp.h>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -145,10 +146,11 @@ public:
                         {
                             for (int y = border.first; y < border.second; ++y)
                             {
-                                if (field[x][y] != '#' && last_use_copy[x][y] != UT)
+                                if (field[x][y] != '#' &&
+                                    last_use_copy[x][y] != UT)
                                 {
-                                    auto [t, local_prop, _] =
-                                        propagate_flow(x, y, 1, last_use_copy, true, border);
+                                    auto [t, local_prop, _] = propagate_flow(
+                                        x, y, 1, last_use_copy, true, border);
                                     if (t > EPSILON)
                                     {
                                         debug_thread[c]++;
@@ -267,7 +269,8 @@ public:
     }
 
     tuple<vFlowType, bool, pair<int, int>>
-    propagate_flow(int x, int y, vFlowType lim, last_uded_t& last_use, bool checkBorders = false,
+    propagate_flow(int x, int y, vFlowType lim, last_uded_t& last_use,
+                   bool checkBorders = false,
                    PropagateFlowBorder border = { 0, 0 })
     {
         last_use[x][y] = UT - 1;
@@ -501,6 +504,9 @@ public:
         rho['.'] = 1000;
         pType g = 0.1;
 
+#ifdef THREAD_NUM
+#pragma omp parallel for collapse(2)
+#endif
         for (size_t x = 0; x < n; ++x)
         {
             for (size_t y = 0; y < m; ++y)
@@ -519,7 +525,10 @@ public:
         {
 
             pType total_delta_p = 0;
-            // Apply external forces
+// Apply external forces
+#ifdef THREAD_NUM
+#pragma omp parallel for collapse(2)
+#endif
             for (size_t x = 0; x < n; ++x)
             {
                 for (size_t y = 0; y < m; ++y)
@@ -589,8 +598,8 @@ public:
                             if (field[x][border.second] != '#' &&
                                 last_use[x][border.second] != UT)
                             {
-                                auto [t, local_prop, _] =
-                                    propagate_flow(x, border.second, 1, last_use, false);
+                                auto [t, local_prop, _] = propagate_flow(
+                                    x, border.second, 1, last_use, false);
                                 if (t > EPSILON)
                                 {
                                     prop = true;
@@ -603,9 +612,12 @@ public:
                 start_barrier.arrive_and_wait();
                 end_barrier.arrive_and_wait();
 
-                for(size_t x = 0; x < n; ++x){
-                    for(size_t y = 0; y < 0; ++y){
-                        last_use[x][y] = max(last_use[x][y], last_use_copy[x][y]);
+                for (size_t x = 0; x < n; ++x)
+                {
+                    for (size_t y = 0; y < 0; ++y)
+                    {
+                        last_use[x][y] =
+                            max(last_use[x][y], last_use_copy[x][y]);
                     }
                 }
 
@@ -694,7 +706,7 @@ public:
             }
 
 #ifdef BENCH
-            if (i >= 200)
+            if (i >= 500)
             {
                 auto now = chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = now - start;

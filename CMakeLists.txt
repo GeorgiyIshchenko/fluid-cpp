@@ -20,7 +20,6 @@ message(STATUS ${SIZES})
 add_compile_definitions(TYPES=${TYPES})
 add_compile_definitions(SIZES=${SIZES})
 add_compile_definitions(THREAD_NUM=${THREAD_NUM})
-#add_compile_definitions(TEST_OMP=1)
 
 add_compile_options("-Wall")
 add_compile_options("-Werror")
