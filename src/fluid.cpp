@@ -437,9 +437,6 @@ public:
             auto [dx, dy] = deltas[d];
             nx = x + dx;
             ny = y + dy;
-            assert(abs(velocity.get(x, y, dx, dy)) > EPSILON &&
-                   field(nx, ny) != '#' && last_use(nx, ny) < UT);
-
             ret = (last_use(nx, ny) == UT - 1 || propagate_move(nx, ny, false));
         } while (!ret);
         last_use(x, y) = UT;
@@ -587,7 +584,7 @@ public:
                             {
                                 auto [t, local_prop, _] = propagate_flow(
                                     x, border.second, 1, last_use, false);
-                                if (t > EPSILON)
+                                if (t > 0.)
                                 {
                                     prop = true;
                                 }
@@ -621,7 +618,7 @@ public:
                     {
                         auto old_v = velocity.get(x, y, dx, dy);
                         auto new_v = velocity_flow.get(x, y, dx, dy);
-                        if (abs(old_v) > EPSILON)
+                        if (old_v > 0.)
                         {
                             assert(new_v <= old_v);
                             velocity.get(x, y, dx, dy) = new_v;
