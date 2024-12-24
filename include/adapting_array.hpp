@@ -42,7 +42,15 @@ public:
     }
 
     AdaptingArray(size_t rows, size_t cols, const T& default_value = T{})
-        requires(!is_static): n(rows), m(cols)
+        requires(is_static)
+        : n(rows), m(cols)
+    {
+        (void) default_value;
+    }
+
+    AdaptingArray(size_t rows, size_t cols, const T& default_value = T{})
+        requires(!is_static)
+        : n(rows), m(cols)
     {
         data.resize(rows * cols, default_value);
     }

@@ -164,19 +164,18 @@ public:
     }
 
     FluidSim(FieldReader& inpField, int num_threads)
-        requires(sizeMatch)
         : n(inpField.N),
           m(inpField.M),
           num_threads(num_threads),
           start_barrier(num_threads + 1, []() {}),
           end_barrier(num_threads + 1, []() {}),
           borders(inpField.M, num_threads),
-          field(),
-          p(),
-          old_p(),
-          last_use(),
-          last_use_copy(),
-          dirs()
+          field(n, m),
+          p(n, m),
+          old_p(n, m),
+          last_use(n, m),
+          last_use_copy(n, m),
+          dirs(n, m)
     {
         n = inpField.N;
         m = inpField.M;
@@ -192,46 +191,6 @@ public:
             }
             cout << "\n";
         }
-        for (size_t i = 0; i < n; ++i)
-        {
-            for (size_t j = 0; j < m; ++j)
-            {
-                field(i, j) = inpField.field[i][j];
-            }
-        }
-
-        init_workers();
-
-        cout << "CTOR SUCCESSED!" << "\n";
-    }
-
-    FluidSim(FieldReader& inpField, int num_threads)
-        requires(!sizeMatch)
-        : n(inpField.N),
-          m(inpField.M),
-          num_threads(num_threads),
-          start_barrier(num_threads + 1, []() {}),
-          end_barrier(num_threads + 1, []() {}),
-          borders(inpField.M, num_threads),
-          field(n, m),
-          p(n, m),
-          old_p(n, m),
-          last_use(n, m),
-          last_use_copy(n, m),
-          dirs(n, m)
-    {
-        cout << "DYNAMIC FLUID CTOR: " << n << " " << m << " "
-             << inpField.field.size() << " " << inpField.field[0].size()
-             << "\n";
-        for (size_t i = 0; i < n; ++i)
-        {
-            for (size_t j = 0; j < m; ++j)
-            {
-                cout << inpField.field[i][j];
-            }
-            cout << "\n";
-        }
-        field = { n, m };
         for (size_t i = 0; i < n; ++i)
         {
             for (size_t j = 0; j < m; ++j)

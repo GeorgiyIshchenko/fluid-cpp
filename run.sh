@@ -19,5 +19,5 @@ cmake --build build --parallel $(nproc) || exit 1
 cp -f build/compile_commands.json .
 
 #./build/fluid --p-type=FLOAT --v-type=FAST_FIXED\(32,5\) --v-flow-type=FAST_FIXED\(32,5\) --field="fields/example1"
-./build/fluid --p-type="FAST_FIXED(16, 7)" --v-type="FAST_FIXED(16, 7)" --v-flow-type="FAST_FIXED(16, 7)" --field="fields/example1" --j=2
+./build/fluid --p-type="FAST_FIXED(16, 7)" --v-type="FAST_FIXED(16, 7)" --v-flow-type="FAST_FIXED(16, 7)" --field="fields/example1" --j=1
 #./build/fluid-stupid
