@@ -514,7 +514,7 @@ struct PropagateFlowBorders
         {
             if (i * step != min((i + 1) * step, m))
             {
-                borders.push_back({ i * step, min((i + 1) * step, m) });
+                borders.push_back({ i * step, min((i + 1) * step, m)});
                 // if (static_cast<int>(((i + 1.5)) * step) < m)
                 // {
                 //     borders.push_back(

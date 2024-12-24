@@ -8,7 +8,7 @@ cmake -S . \
       -DCMAKE_CXX_COMPILER=clang++-18 \
       -DCMAKE_C_COMPILER=clang-18 \
       -DTYPES="FAST_FIXED(64, 8)" \
-      -DSIZES="S(36,84)" \
+      -DSIZES="S(36,85)" \
       -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -Wall -Wextra -pedantic -fprofile-instr-generate -fcoverage-mapping -fopenmp=libomp" \
       -DCMAKE_BUILD_TYPE=release \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=1 
@@ -19,5 +19,5 @@ cmake --build build --parallel $(nproc) || exit 1
 cp -f build/compile_commands.json .
 
 #./build/fluid --p-type=FLOAT --v-type=FAST_FIXED\(32,5\) --v-flow-type=FAST_FIXED\(32,5\) --field="fields/example1"
-./build/fluid --p-type="FAST_FIXED(64, 8)" --v-type="FAST_FIXED(64, 8)" --v-flow-type="FAST_FIXED(64, 8)" --field="fields/example1" --j=12
+./build/fluid --p-type="FAST_FIXED(64, 8)" --v-type="FAST_FIXED(64, 8)" --v-flow-type="FAST_FIXED(64, 8)" --field="fields/example1" --j=1
 #./build/fluid-stupid
