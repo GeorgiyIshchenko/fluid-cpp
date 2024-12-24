@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -30,11 +31,11 @@ class FluidSim
 public:
     size_t n;
     size_t m;
-    bool simProp = false;
     int num_threads = 1;
+    bool prop = false;
     bool alive = true;
 
-    std::vector<thread> workers;
+    std::vector<jthread> workers;
     std::barrier<std::function<void(void)>> start_barrier, end_barrier;
 
     PropagateFlowBorders borders;
@@ -61,11 +62,12 @@ public:
     {
         conditional_t<sizeMatch, array<array<array<T, deltas.size()>, M>, N>,
                       vector<vector<vector<T>>>>
-            v{};
+            v;
 
         VectorField()
             requires(!sizeMatch)
         {
+            v = {};
             v.resize(global_n);
             for (size_t i = 0; i < global_n; ++i)
             {
@@ -73,7 +75,9 @@ public:
                 for (size_t j = 0; j < global_m; ++j)
                 {
                     v[i][j].resize(deltas.size());
+                    //cout << static_cast<double>(v[i][j][0]);
                 }
+                //cout << "\n";
             }
         }
 
@@ -94,7 +98,7 @@ public:
         }
     };
 
-    inline static VectorField<vType> velocity{}, velocity_flow{};
+    inline static VectorField<vType> velocity, velocity_flow;
     inline static conditional_t<sizeMatch, array<array<int, M>, N>,
                                 vector<vector<int>>>
         last_use{};
@@ -105,35 +109,64 @@ public:
 
     mt19937 rnd{ 1337 };
 
+    vector<int> debug_thread;
+
+    vector<vector<char>> debug_thread_matrix = {};
+
+    std::chrono::duration<double> debug_elapsed_waiting = {};
+
     void init_workers()
     {
-        for (auto&& border : borders.borders)
+        debug_thread.resize(num_threads);
+        debug_thread_matrix.resize(n, vector<char>(m, '-'));
+        for (size_t x = 0; x < n; ++x)
         {
-            workers.emplace_back(
-                [this, &border]()
+            for (size_t y = 0; y < m; ++y)
+            {
+                cout << debug_thread_matrix[x][y];
+            }
+            cout << "\n";
+        }
+        int i = 0;
+        for (auto border : borders.borders)
+        {
+            workers.push_back(jthread{
+                [this, border, i]()
                 {
+                    int c = i;
                     while (alive)
                     {
+                        debug_thread[c]++;
+                        auto st = chrono::high_resolution_clock::now();
                         start_barrier.arrive_and_wait();
+                        debug_elapsed_waiting +=
+                            chrono::high_resolution_clock::now() - st;
                         // cout << "WORKER" << "\n";
-                        for (size_t x = 0; x < n; ++x)
+                        prop = false;
+                        for (int x = 0; x < static_cast<int>(n); ++x)
                         {
-                            for (size_t y = (size_t)border.first; y < (size_t)border.second; ++y)
+                            for (int y = border.first; y < border.second; ++y)
                             {
                                 if (field[x][y] != '#' && last_use[x][y] != UT)
                                 {
                                     auto [t, local_prop, _] =
                                         propagate_flow(x, y, 1, true, border);
-                                    if (t > 0.)
+                                    if (t > EPSILON)
                                     {
-                                        simProp = 1;
+                                        debug_thread_matrix[x][y] =
+                                            to_string(c)[0];
+                                        prop = true;
                                     }
                                 }
                             }
                         }
+                        st = chrono::high_resolution_clock::now();
                         end_barrier.arrive_and_wait();
+                        debug_elapsed_waiting +=
+                            chrono::high_resolution_clock::now() - st;
                     }
-                });
+                } });
+            i++;
         }
     }
 
@@ -146,6 +179,10 @@ public:
     {
         n = inpField.N;
         m = inpField.M;
+
+        velocity = {};
+        velocity_flow = {};
+
         cout << "STATIC FLUID CTOR: " << n << " " << m << " "
              << inpField.field.size() << " " << inpField.field[0].size()
              << endl;
@@ -173,12 +210,16 @@ public:
     FluidSim(FieldReader& inpField, int num_threads)
         requires(!sizeMatch)
         : num_threads(num_threads),
-          start_barrier(num_threads, []() {}),
-          end_barrier(num_threads, []() {}),
+          start_barrier(num_threads + 1, []() {}),
+          end_barrier(num_threads + 1, []() {}),
           borders(inpField.M, num_threads)
     {
         n = inpField.N;
         m = inpField.M;
+
+        velocity = {};
+        velocity_flow = {};
+
         cout << "DYNAMIC FLUID CTOR: " << n << " " << m << " "
              << inpField.field.size() << " " << inpField.field[0].size()
              << endl;
@@ -190,6 +231,7 @@ public:
             }
             cout << endl;
         }
+        field = {};
         field.resize(n, vector<char>(m));
         for (size_t i = 0; i < n; ++i)
         {
@@ -199,13 +241,25 @@ public:
             }
         }
 
-        init_workers();
+        p = {};
+        old_p = {};
+        last_use = {};
+        dirs = {};
 
         p.resize(n, vector<pType>(m, 0));
         old_p.resize(n, vector<pType>(m, 0));
         last_use.resize(n, vector<int>(m, 0));
         dirs.resize(n, vector<pType>(m, 0));
+
+        init_workers();
+
+        cout << "CTOR SUCCESSED!" << endl;
     }
+
+    FluidSim(const FluidSim& other) = delete;
+    FluidSim(FluidSim&& other) = delete;
+
+    pair<size_t, size_t> debug_missed = {0, 0};
 
     ~FluidSim()
     {
@@ -216,7 +270,7 @@ public:
     propagate_flow(int x, int y, vFlowType lim, bool checkBorders = false,
                    PropagateFlowBorder border = { 0, 0 })
     {
-        last_use[x][y] = UT - 1;
+        last_use[x][y] = UT - 1 - 2 * (!checkBorders);
         vFlowType ret = 0;
         for (auto [dx, dy] : deltas)
         {
@@ -224,14 +278,16 @@ public:
 
             if (checkBorders)
             {
-                if (ny < border.first ||
-                    ny >= border.second)
+                if (ny < border.first || ny >= border.second)
                 {
+                    debug_missed.first++;
                     continue;
                 }
             }
+            debug_missed.second++;
 
-            if (field[nx][ny] != '#' && last_use[nx][ny] < UT)
+            if (field[nx][ny] != '#' &&
+                last_use[nx][ny] < UT - 2 * (!checkBorders))
             {
                 auto cap = velocity.get(x, y, dx, dy);
                 auto flow = velocity_flow.get(x, y, dx, dy);
@@ -241,10 +297,10 @@ public:
                 }
                 // assert(v >= velocity_flow.get(x, y, dx, dy));
                 auto vp = min(lim, static_cast<vFlowType>(cap - flow));
-                if (last_use[nx][ny] == UT - 1)
+                if (last_use[nx][ny] == UT - 1 - 2 * (!checkBorders))
                 {
                     velocity_flow.add(x, y, dx, dy, vp);
-                    last_use[x][y] = UT;
+                    last_use[x][y] = UT - 2 * (!checkBorders);
                     // cerr << "A " << x << " " << y << " -> " << nx << " " <<
                     // ny
                     //      << " " << vp << " / " << lim << "\n";
@@ -256,7 +312,7 @@ public:
                 if (prop)
                 {
                     velocity_flow.add(x, y, dx, dy, t);
-                    last_use[x][y] = UT;
+                    last_use[x][y] = UT - 2 * (!checkBorders);
                     // cerr << "B " << x << " " << y << " -> " << nx << " " <<
                     // ny
                     //      << " " << t << " / " << lim << "\n";
@@ -283,7 +339,7 @@ public:
             {
                 int nx = x + dx, ny = y + dy;
                 if (field[nx][ny] != '#' && last_use[nx][ny] < UT - 1 &&
-                    velocity.get(x, y, dx, dy) > 0.)
+                    velocity.get(x, y, dx, dy) > EPSILON)
                 {
                     stop = false;
                     break;
@@ -299,7 +355,7 @@ public:
         {
             int nx = x + dx, ny = y + dy;
             if (field[nx][ny] == '#' || last_use[nx][ny] == UT ||
-                velocity.get(x, y, dx, dy) > 0.)
+                velocity.get(x, y, dx, dy) > EPSILON)
             {
                 continue;
             }
@@ -319,7 +375,7 @@ public:
                 continue;
             }
             auto v = velocity.get(x, y, dx, dy);
-            if (v < 0.)
+            if (v < EPSILON)
             {
                 continue;
             }
@@ -375,7 +431,7 @@ public:
                     continue;
                 }
                 auto v = velocity.get(x, y, dx, dy);
-                if (v < 0.)
+                if (v < EPSILON)
                 {
                     tres[i] = sum;
                     continue;
@@ -384,7 +440,7 @@ public:
                 tres[i] = sum;
             }
 
-            if (sum == 0.)
+            if (abs(sum) < EPSILON)
             {
                 break;
             }
@@ -395,7 +451,7 @@ public:
             auto [dx, dy] = deltas[d];
             nx = x + dx;
             ny = y + dy;
-            assert(velocity.get(x, y, dx, dy) > 0. && field[nx][ny] != '#' &&
+            assert(abs(velocity.get(x, y, dx, dy)) > EPSILON && field[nx][ny] != '#' &&
                    last_use[nx][ny] < UT);
 
             ret = (last_use[nx][ny] == UT - 1 || propagate_move(nx, ny, false));
@@ -406,7 +462,7 @@ public:
             auto [dx, dy] = deltas[i];
             int nx = x + dx, ny = y + dy;
             if (field[nx][ny] != '#' && last_use[nx][ny] < UT - 1 &&
-                velocity.get(x, y, dx, dy) < 0.)
+                abs(velocity.get(x, y, dx, dy)) < EPSILON)
             {
                 propagate_stop(nx, ny);
             }
@@ -423,202 +479,222 @@ public:
         }
         return ret;
     }
-};
 
-template <typename pType, typename vType, typename vFlowType, size_t N,
-          size_t M>
-void do_main(FluidSim<pType, vType, vFlowType, N, M>& sim)
-{
-    cout << "Starting simultaion..." << endl;
+    void run()
+    {
+        cout << "Starting simultaion..." << endl;
 #ifdef BENCH
-    auto start = chrono::high_resolution_clock::now();
+        auto start = chrono::high_resolution_clock::now();
 #endif
-    sim.rho[' '] = 0.01;
-    sim.rho['.'] = 1000;
-    pType g = 0.1;
+        rho[' '] = 0.01;
+        rho['.'] = 1000;
+        pType g = 0.1;
 
-    for (size_t x = 0; x < sim.n; ++x)
-    {
-        for (size_t y = 0; y < sim.m; ++y)
+        for (size_t x = 0; x < n; ++x)
         {
-            if (sim.field[x][y] == '#')
-                continue;
-            for (auto [dx, dy] : sim.deltas)
+            for (size_t y = 0; y < m; ++y)
             {
-                sim.dirs[x][y] +=
-                    static_cast<pType>(sim.field[x + dx][y + dy] != '#');
-            }
-        }
-    }
-
-    for (size_t i = 0; i < sim.T; ++i)
-    {
-
-        pType total_delta_p = 0;
-        // Apply external forces
-        for (size_t x = 0; x < sim.n; ++x)
-        {
-            for (size_t y = 0; y < sim.m; ++y)
-            {
-                if (sim.field[x][y] == '#')
+                if (field[x][y] == '#')
                     continue;
-                if (sim.field[x + 1][y] != '#')
-                    sim.velocity.add(x, y, 1, 0, g);
-            }
-        }
-
-        // Apply forces from p
-        // memcpy(sim.old_p, sim.p, sizeof(sim.p));
-        for (size_t i = 0; i < sim.n; ++i)
-        {
-            sim.old_p[i] = sim.p[i];
-        }
-
-        for (size_t x = 0; x < sim.n; ++x)
-        {
-            for (size_t y = 0; y < sim.m; ++y)
-            {
-                if (sim.field[x][y] == '#')
-                    continue;
-                for (auto [dx, dy] : sim.deltas)
+                for (auto [dx, dy] : deltas)
                 {
-                    int nx = x + dx, ny = y + dy;
-                    if (sim.field[nx][ny] != '#' &&
-                        sim.old_p[nx][ny] < sim.old_p[x][y])
-                    {
-                        auto delta_p = sim.old_p[x][y] - sim.old_p[nx][ny];
-                        auto force = delta_p;
-                        auto& contr = sim.velocity.get(nx, ny, -dx, -dy);
-                        if (contr * sim.rho[(int)sim.field[nx][ny]] >= force)
-                        {
-                            contr -= force / sim.rho[(int)sim.field[nx][ny]];
-                            continue;
-                        }
-                        force -= static_cast<pType>(
-                            contr * sim.rho[(int)sim.field[nx][ny]]);
-                        contr = 0;
-                        sim.velocity.add(x, y, dx, dy,
-                                         force / sim.rho[(int)sim.field[x][y]]);
-                        sim.p[x][y] -= force / sim.dirs[x][y];
-                        total_delta_p -= force / sim.dirs[x][y];
-                    }
+                    dirs[x][y] +=
+                        static_cast<pType>(field[x + dx][y + dy] != '#');
                 }
             }
         }
 
-        // Make flow from velocities
-        sim.velocity_flow = {};
-        sim.simProp = false;
-        do
+        for (size_t i = 0; i < T; ++i)
         {
-            sim.UT += 2;
 
-            sim.simProp = false;
-
-            sim.start_barrier.arrive_and_wait();
-            sim.end_barrier.arrive_and_wait();
-
-            for (auto&& border : sim.borders.borders)
+            pType total_delta_p = 0;
+            // Apply external forces
+            for (size_t x = 0; x < n; ++x)
             {
-                for (size_t x = 0; x < sim.n; ++x)
+                for (size_t y = 0; y < m; ++y)
                 {
-                    if ((size_t)border.second < sim.m)
+                    if (field[x][y] == '#')
+                        continue;
+                    if (field[x + 1][y] != '#')
+                        velocity.add(x, y, 1, 0, g);
+                }
+            }
+
+            // Apply forces from p
+            // memcpy(sim.old_p, sim.p, sizeof(sim.p));
+            for (size_t i = 0; i < n; ++i)
+            {
+                old_p[i] = p[i];
+            }
+
+            for (size_t x = 0; x < n; ++x)
+            {
+                for (size_t y = 0; y < m; ++y)
+                {
+                    if (field[x][y] == '#')
+                        continue;
+                    for (auto [dx, dy] : deltas)
                     {
-                        if (sim.field[x][border.second] != '#' &&
-                            sim.last_use[x][border.second] != sim.UT)
+                        int nx = x + dx, ny = y + dy;
+                        if (field[nx][ny] != '#' && old_p[nx][ny] < old_p[x][y])
                         {
-                            auto [t, local_prop, _] =
-                                sim.propagate_flow(x, border.second, 1, false);
-                            if (t > 0.)
+                            auto delta_p = old_p[x][y] - old_p[nx][ny];
+                            auto force = delta_p;
+                            auto& contr = velocity.get(nx, ny, -dx, -dy);
+                            if (contr * rho[(int)field[nx][ny]] >= force)
                             {
-                                sim.simProp = 1;
+                                contr -= force / rho[(int)field[nx][ny]];
+                                continue;
+                            }
+                            force -= static_cast<pType>(
+                                contr * rho[(int)field[nx][ny]]);
+                            contr = 0;
+                            velocity.add(x, y, dx, dy,
+                                         force / rho[(int)field[x][y]]);
+                            p[x][y] -= force / dirs[x][y];
+                            total_delta_p -= force / dirs[x][y];
+                        }
+                    }
+                }
+            }
+
+            // Make flow from velocities
+            velocity_flow = {};
+            prop = false;
+            do
+            {
+                UT += 2;
+
+                prop = false;
+
+                start_barrier.arrive_and_wait();
+                end_barrier.arrive_and_wait();
+
+                for (auto&& border : borders.borders)
+                {
+                    for (size_t x = 0; x < n; ++x)
+                    {
+                        if ((size_t)border.second < m)
+                        {
+                            if (field[x][border.second] != '#' &&
+                                last_use[x][border.second] != UT)
+                            {
+                                auto [t, local_prop, _] =
+                                    propagate_flow(x, border.second, 1, false);
+                                if (t > EPSILON)
+                                {
+                                    prop = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+            } while (prop);
+
+            // Recalculate p with kinetic energy
+            for (size_t x = 0; x < n; ++x)
+            {
+                for (size_t y = 0; y < m; ++y)
+                {
+                    if (field[x][y] == '#')
+                        continue;
+                    for (auto [dx, dy] : deltas)
+                    {
+                        auto old_v = velocity.get(x, y, dx, dy);
+                        auto new_v = velocity_flow.get(x, y, dx, dy);
+                        if (abs(old_v) > EPSILON)
+                        {
+                            assert(new_v <= old_v);
+                            velocity.get(x, y, dx, dy) = new_v;
+                            auto force =
+                                (old_v - new_v) * rho[(int)field[x][y]];
+                            if (field[x][y] == '.')
+                                force *= 0.8;
+                            if (field[x + dx][y + dy] == '#')
+                            {
+                                p[x][y] += force / dirs[x][y];
+                                total_delta_p += force / dirs[x][y];
+                            }
+                            else
+                            {
+                                p[x + dx][y + dy] +=
+                                    force / dirs[x + dx][y + dy];
+                                total_delta_p += force / dirs[x + dx][y + dy];
                             }
                         }
                     }
                 }
             }
 
-        } while (sim.simProp);
-
-        // Recalculate p with kinetic energy
-        for (size_t x = 0; x < sim.n; ++x)
-        {
-            for (size_t y = 0; y < sim.m; ++y)
+            UT += 2;
+            prop = false;
+            for (size_t x = 0; x < n; ++x)
             {
-                if (sim.field[x][y] == '#')
-                    continue;
-                for (auto [dx, dy] : sim.deltas)
+                for (size_t y = 0; y < m; ++y)
                 {
-                    auto old_v = sim.velocity.get(x, y, dx, dy);
-                    auto new_v = sim.velocity_flow.get(x, y, dx, dy);
-                    if (old_v > 0.)
+                    if (field[x][y] != '#' && last_use[x][y] != UT)
                     {
-                        assert(new_v <= old_v);
-                        sim.velocity.get(x, y, dx, dy) = new_v;
-                        auto force =
-                            (old_v - new_v) * sim.rho[(int)sim.field[x][y]];
-                        if (sim.field[x][y] == '.')
-                            force *= 0.8;
-                        if (sim.field[x + dx][y + dy] == '#')
+                        if (random01() < move_prob(x, y))
                         {
-                            sim.p[x][y] += force / sim.dirs[x][y];
-                            total_delta_p += force / sim.dirs[x][y];
+                            prop = true;
+                            propagate_move(x, y, true);
                         }
                         else
                         {
-                            sim.p[x + dx][y + dy] +=
-                                force / sim.dirs[x + dx][y + dy];
-                            total_delta_p += force / sim.dirs[x + dx][y + dy];
+                            propagate_stop(x, y, true);
                         }
                     }
                 }
             }
-        }
 
-        sim.UT += 2;
-        sim.simProp = false;
-        for (size_t x = 0; x < sim.n; ++x)
-        {
-            for (size_t y = 0; y < sim.m; ++y)
+            // if (prop)
+            // {
+            //     cout << "Tick " << i << ":\n";
+            //     for (size_t x = 0; x < n; ++x)
+            //     {
+            //         for (size_t y = 0; y < m; ++y)
+            //         {
+            //             cout << debug_thread_matrix[x][y];
+            //         }
+            //         cout << "\n";
+            //     }
+            // }
+
+            if (prop)
             {
-                if (sim.field[x][y] != '#' && sim.last_use[x][y] != sim.UT)
+                cout << "Tick " << i << ":\n";
+                for (size_t x = 0; x < n; ++x)
                 {
-                    if (sim.random01() < sim.move_prob(x, y))
+                    for (size_t y = 0; y < m; ++y)
                     {
-                        sim.simProp = true;
-                        sim.propagate_move(x, y, true);
+                        cout << field[x][y];
                     }
-                    else
-                    {
-                        sim.propagate_stop(x, y, true);
-                    }
+                    cout << "\n";
                 }
             }
-        }
-
-        if (sim.simProp)
-        {
-            cout << "Tick " << i << ":\n";
-            for (size_t x = 0; x < sim.n; ++x)
-            {
-                for (size_t y = 0; y < sim.m; ++y)
-                {
-                    cout << sim.field[x][y];
-                }
-                cout << "\n";
-            }
-        }
 
 #ifdef BENCH
-        if (i >= 1000)
-        {
-            auto now = chrono::high_resolution_clock::now();
-            std::chrono::duration<double> elapsed = now - start;
-            cout << "Time elapsed: " << elapsed.count() << " s\n";            break;
-        }
+            if (i >= 200)
+            {
+                auto now = chrono::high_resolution_clock::now();
+                std::chrono::duration<double> elapsed = now - start;
+                cout << "Time elapsed: " << elapsed.count() << " s\n";
+                cout << "Waiting time elapsed " << debug_elapsed_waiting
+                     << " s\n";
+                for (auto a : debug_thread)
+                {
+                    cout << a << " ";
+                }
+                cout << endl;
+                cout << "Missing stat: " << debug_missed.first << " " << debug_missed.second << " " << (double)debug_missed.first / debug_missed.second * 100 << "%" << endl;
+                break;
+                // exit(0);
+            }
 #endif
+        }
     }
-}
+};
 
 void printDelim()
 {
@@ -779,9 +855,7 @@ int main(int argc, char** argv)
                                            FluidSim<pType, vType, vFlowType,
                                                     sizeType::n, sizeType::m>
                                                sim(fr, numThreads);
-                                           do_main<pType, vType, vFlowType,
-                                                   sizeType::n, sizeType::m>(
-                                               sim);
+                                           sim.run();
                                        });
 
                             if (!sizeMatches)
@@ -789,7 +863,7 @@ int main(int argc, char** argv)
                                 cout << "Sizes do not match" << endl;
                                 FluidSim<pType, vType, vFlowType, 0, 0> sim(
                                     fr, numThreads);
-                                do_main<pType, vType, vFlowType, 0, 0>(sim);
+                                sim.run();
                             }
                         });
                 });
