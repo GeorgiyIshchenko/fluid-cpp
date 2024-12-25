@@ -10,6 +10,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(THREAD_NUM 12 CACHE STRING "Number of threads")
 
+set(BENCH_TIKS 300)
+
 set(SIZES "" CACHE STRING "Sizes of field")
 
 set(TYPES "" CACHE STRING "Types for compilation")
@@ -20,6 +22,7 @@ message(STATUS ${SIZES})
 add_compile_definitions(TYPES=${TYPES})
 add_compile_definitions(SIZES=${SIZES})
 add_compile_definitions(THREAD_NUM=${THREAD_NUM})
+add_compile_definitions(BENCH_TIKS=${BENCH_TIKS})
 
 add_compile_options("-Wall")
 add_compile_options("-Werror")

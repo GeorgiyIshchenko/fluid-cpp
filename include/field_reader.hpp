@@ -27,11 +27,11 @@ public:
         {
             // cout << " " << line << endl;
             if (flag){
-                m = line.size() - 2;
+                m = line.size();
                 flag = false;
             }
             vector<char> row;
-            for (auto&& c: line.substr(0, line.size() - 2)){
+            for (auto&& c: line.substr(0, line.size())){
                 row.push_back(c);
             }
             field.push_back(row);

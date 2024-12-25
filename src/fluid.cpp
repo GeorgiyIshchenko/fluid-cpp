@@ -16,8 +16,11 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <type_traits>
 #include <vector>
+
+#ifndef BENCH_TIKS
+    #define BENCH_TIKS 1000
+#endif
 
 template <typename vFlowType> struct BFSNode
 {
@@ -47,13 +50,13 @@ public:
 
     // Threads
 
+    PropagateFlowBorders borders;
+
     int num_threads = 1;
     atomic<bool> prop = false;
     bool alive = true;
     std::vector<jthread> workers;
     std::barrier<std::function<void(void)>> start_barrier, end_barrier;
-
-    PropagateFlowBorders borders;
 
     // Arrays
 
@@ -163,13 +166,13 @@ public:
         }
     }
 
-    FluidSim(FieldReader& inpField, int num_threads)
+    FluidSim(FieldReader& inpField, int threads)
         : n(inpField.N),
           m(inpField.M),
-          num_threads(num_threads),
+          borders(inpField.M, threads),
+          num_threads(borders.borders.size()),
           start_barrier(num_threads + 1, []() {}),
           end_barrier(num_threads + 1, []() {}),
-          borders(inpField.M, num_threads),
           field(n, m),
           p(n, m),
           old_p(n, m),
@@ -180,7 +183,7 @@ public:
         n = inpField.N;
         m = inpField.M;
 
-        cout << "STATIC FLUID CTOR: " << n << " " << m << " "
+        cout << "FLUID CTOR: " << n << " " << m << " "
              << inpField.field.size() << " " << inpField.field[0].size()
              << "\n";
         for (size_t i = 0; i < n; ++i)
@@ -253,15 +256,11 @@ public:
                 {
                     continue;
                 }
-                // assert(v >= velocity_flow.get(x, y, dx, dy));
                 auto vp = min(lim, static_cast<vFlowType>(cap - flow));
                 if (last_use(nx, ny) == UT - 1)
                 {
                     velocity_flow.add(x, y, dx, dy, vp);
                     last_use(x, y) = UT;
-                    // cerr << "A " << x << " " << y << " -> " << nx << " " <<
-                    // ny
-                    //      << " " << vp << " / " << lim << "\n";
                     return { vp, 1, { nx, ny } };
                 }
                 auto [t, prop, end] =
@@ -271,9 +270,6 @@ public:
                 {
                     velocity_flow.add(x, y, dx, dy, t);
                     last_use(x, y) = UT;
-                    // cerr << "B " << x << " " << y << " -> " << nx << " " <<
-                    // ny
-                    //      << " " << t << " / " << lim << "\n";
                     return { t, prop && end != pair(x, y), end };
                 }
             }
@@ -542,7 +538,7 @@ public:
                                 last_use(x, border.second) != UT)
                             {
                                 auto [t, local_prop, _] = propagate_flow(
-                                    x, border.second, 1, last_use, false);
+                                    x, border.second, 1, last_use);
                                 if (t > 0.)
                                 {
                                     prop = true;
@@ -649,7 +645,7 @@ public:
             }
 
 #ifdef BENCH
-            if (i >= 200)
+            if (i >= BENCH_TIKS)
             {
                 auto now = chrono::high_resolution_clock::now();
                 std::chrono::duration<double> elapsed = now - start;

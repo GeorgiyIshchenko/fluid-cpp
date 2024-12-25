@@ -509,6 +509,11 @@ struct PropagateFlowBorders
 
     PropagateFlowBorders(int m, int parts)
     {
+        if (parts == 1){
+            borders.push_back({0, m});
+            return;
+        }
+
         int step = m / parts;
         for (int i = 0; i < parts + 1; ++i)
         {
